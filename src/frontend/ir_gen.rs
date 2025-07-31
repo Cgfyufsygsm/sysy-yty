@@ -41,8 +41,12 @@ impl Block {
 
 impl Stmt {
   pub fn generate_on(&self, program: &mut Program, func: Function, entry_bb: BasicBlock) {
-    let ret_val = program.func_mut(func).dfg_mut().new_value().integer(self.num);
-    let ret_inst = program.func_mut(func).dfg_mut().new_value().ret(Some(ret_val));
-    program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(ret_inst).unwrap();
+    match self {
+      Stmt::Return(value) => {
+        let ret_val = program.func_mut(func).dfg_mut().new_value().integer(*value);
+        let ret_inst = program.func_mut(func).dfg_mut().new_value().ret(Some(ret_val));
+        program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(ret_inst).unwrap();
+      }
+    }
   }
 }

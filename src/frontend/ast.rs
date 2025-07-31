@@ -22,6 +22,6 @@ pub struct Block {
 }
 
 #[derive(Debug)]
-pub struct Stmt {
-    pub num: i32,
+pub enum Stmt {
+    Return(i32),
 }

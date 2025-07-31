@@ -28,10 +28,9 @@ FuncType: FuncType = "int" => FuncType::Int;
 
 Block: Block = "{" <stmt: Stmt> "}" => Block { stmt };
 
-Stmt: Stmt = "return" <num: Number> ";" => Stmt { <> };
+Stmt: Stmt = "return" <num: Number> ";" => Stmt::Return(num);
 
-Number: i32 = <num: IntConst> => <>;
-
+Number: i32 = <num: IntConst> => num;
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)
