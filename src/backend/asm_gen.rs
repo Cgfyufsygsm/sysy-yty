@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use koopa::ir::{entities::ValueData, values::{self, Return, Binary, BinaryOp}, FunctionData, Program, Value, ValueKind};
+use koopa::ir::{entities::ValueData, values::{Return, Binary, BinaryOp}, FunctionData, Program, Value, ValueKind};
 
 pub(crate) trait GenerateAsm {
   fn generate_asm(&self) -> String;

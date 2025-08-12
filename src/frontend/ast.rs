@@ -28,11 +28,16 @@ pub enum Stmt {
 
 #[derive(Debug)]
 pub enum Exp {
+  Number(i32),
   Unary {
     op: UnaryOp,
     exp: Box<Exp>
   },
-  Number(i32),
+  Binary {
+    op: BinaryOp,
+    lhs: Box<Exp>,
+    rhs: Box<Exp>
+  }
 }
 
 #[derive(Debug)]
@@ -40,4 +45,13 @@ pub enum UnaryOp {
   Pos,
   Neg,
   Not
+}
+
+#[derive(Debug)]
+pub enum BinaryOp {
+  Add,
+  Sub,
+  Mul,
+  Div,
+  Mod
 }

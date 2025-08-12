@@ -33,10 +33,23 @@ Stmt: Stmt = "return" <exp: Exp> ";" => Stmt::Return(exp);
 
 // ------------ Expression Parsing ------------
 
-Exp: Exp = UnaryExp;
+Exp: Exp = AddExp;
+
+AddExp: Exp = {
+  <lhs: MulExp> "+" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: MulExp> "-" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <m: MulExp> => m,
+}
+
+MulExp: Exp = {
+  <lhs: MulExp> "*" <rhs: UnaryExp> => Exp::Binary { op: BinaryOp::Mul, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: MulExp> "/" <rhs: UnaryExp> => Exp::Binary { op: BinaryOp::Div, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: MulExp> "%" <rhs: UnaryExp> => Exp::Binary { op: BinaryOp::Mod, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <u: UnaryExp> => u,
+}
 
 UnaryExp: Exp = {
-  <primary: PrimaryExp> => primary,
+  <p: PrimaryExp> => p,
   <op: UnaryOp> <rhs: UnaryExp> => Exp::Unary { op, exp: Box::new(rhs) },
 }
 

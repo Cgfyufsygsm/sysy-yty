@@ -78,6 +78,20 @@ impl Exp {
         program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(inst).unwrap();
         inst
       }
+      Exp::Binary { op, lhs, rhs} => {
+        let lhs_val = lhs.generate_on(program, func, entry_bb);
+        let rhs_val = rhs.generate_on(program, func, entry_bb);
+        let kind = match op {
+          BinaryOp::Add => Add,
+          BinaryOp::Sub => Sub,
+          BinaryOp::Mul => Mul,
+          BinaryOp::Div => Div,
+          BinaryOp::Mod => Mod,
+        };
+        let inst = program.func_mut(func).dfg_mut().new_value().binary(kind, lhs_val, rhs_val);
+        program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(inst).unwrap();
+        inst
+      }
     }
   }
 }
