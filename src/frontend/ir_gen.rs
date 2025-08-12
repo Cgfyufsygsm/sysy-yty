@@ -81,12 +81,44 @@ impl Exp {
       Exp::Binary { op, lhs, rhs} => {
         let lhs_val = lhs.generate_on(program, func, entry_bb);
         let rhs_val = rhs.generate_on(program, func, entry_bb);
+
+        if let BinaryOp::And = op {
+          let zero = program.func_mut(func).dfg_mut().new_value().integer(0);
+          let lhs_bool = program.func_mut(func).dfg_mut().new_value().binary(NotEq, lhs_val, zero);
+          program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(lhs_bool).unwrap();
+          let rhs_bool = program.func_mut(func).dfg_mut().new_value().binary(NotEq, rhs_val, zero);
+          program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(rhs_bool).unwrap();
+          let inst = program.func_mut(func).dfg_mut().new_value().binary(And, lhs_bool, rhs_bool);
+          program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(inst).unwrap();
+          return inst;
+        }
+
+        if let BinaryOp::Or = op {
+          let zero = program.func_mut(func).dfg_mut().new_value().integer(0);
+          let lhs_bool = program.func_mut(func).dfg_mut().new_value().binary(NotEq, lhs_val, zero);
+          program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(lhs_bool).unwrap();
+          let rhs_bool = program.func_mut(func).dfg_mut().new_value().binary(NotEq, rhs_val, zero);
+          program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(rhs_bool).unwrap();
+          let inst = program.func_mut(func).dfg_mut().new_value().binary(Or, lhs_bool, rhs_bool);
+          program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(inst).unwrap();
+          return inst;
+        }
+
         let kind = match op {
           BinaryOp::Add => Add,
           BinaryOp::Sub => Sub,
           BinaryOp::Mul => Mul,
           BinaryOp::Div => Div,
           BinaryOp::Mod => Mod,
+          BinaryOp::Lt => Lt,
+          BinaryOp::Gt => Gt,
+          BinaryOp::Le => Le,
+          BinaryOp::Ge => Ge,
+          BinaryOp::Eq => Eq,
+          BinaryOp::Ne => NotEq,
+          _ => {
+            panic!("Unsupported binary operation: {:?}", op);
+          }
         };
         let inst = program.func_mut(func).dfg_mut().new_value().binary(kind, lhs_val, rhs_val);
         program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(inst).unwrap();

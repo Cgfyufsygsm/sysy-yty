@@ -49,9 +49,8 @@ pub enum UnaryOp {
 
 #[derive(Debug)]
 pub enum BinaryOp {
-  Add,
-  Sub,
-  Mul,
-  Div,
-  Mod
+  Add, Sub, Mul, Div, Mod,
+  Lt, Gt, Le, Ge,
+  Eq, Ne,
+  And, Or,
 }

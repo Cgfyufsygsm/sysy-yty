@@ -33,7 +33,35 @@ Stmt: Stmt = "return" <exp: Exp> ";" => Stmt::Return(exp);
 
 // ------------ Expression Parsing ------------
 
-Exp: Exp = AddExp;
+Exp: Exp = LOrExp;
+
+// LOrExp := LAndExp | LOrExp "||" LAndExp
+LOrExp: Exp = {
+  <lhs: LOrExp> "||" <rhs: LAndExp> => Exp::Binary { op: BinaryOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <a: LAndExp> => a,
+};
+
+// LAndExp := EqExp | LAndExp "&&" EqExp
+LAndExp: Exp = {
+  <lhs: LAndExp> "&&" <rhs: EqExp> => Exp::Binary { op: BinaryOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <e: EqExp> => e,
+};
+
+// EqExp := RelExp | EqExp ("==" | "!=") RelExp
+EqExp: Exp = {
+  <lhs: EqExp> "==" <rhs: RelExp> => Exp::Binary { op: BinaryOp::Eq, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: EqExp> "!=" <rhs: RelExp> => Exp::Binary { op: BinaryOp::Ne, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <r: RelExp> => r,
+};
+
+// RelExp := AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp
+RelExp: Exp = {
+  <lhs: RelExp> "<"  <rhs: AddExp> => Exp::Binary { op: BinaryOp::Lt, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: RelExp> ">"  <rhs: AddExp> => Exp::Binary { op: BinaryOp::Gt, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: RelExp> "<=" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Le, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: RelExp> ">=" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Ge, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <rhs: AddExp> => rhs,
+};
 
 AddExp: Exp = {
   <lhs: MulExp> "+" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) },
