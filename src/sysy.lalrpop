@@ -28,7 +28,28 @@ FuncType: FuncType = "int" => FuncType::Int;
 
 Block: Block = "{" <stmt: Stmt> "}" => Block { stmt };
 
-Stmt: Stmt = "return" <num: Number> ";" => Stmt::Return(num);
+Stmt: Stmt = "return" <exp: Exp> ";" => Stmt::Return(exp);
+
+
+// ------------ Expression Parsing ------------
+
+Exp: Exp = UnaryExp;
+
+UnaryExp: Exp = {
+  <primary: PrimaryExp> => primary,
+  <op: UnaryOp> <rhs: UnaryExp> => Exp::Unary { op, exp: Box::new(rhs) },
+}
+
+PrimaryExp: Exp = {
+  "(" <exp: Exp> ")" => exp,
+  <num: Number> => Exp::Number(num),
+}
+
+UnaryOp: UnaryOp = { 
+  "+" => UnaryOp::Pos,
+  "-" => UnaryOp::Neg,
+  "!" => UnaryOp::Not,
+}
 
 Number: i32 = <num: IntConst> => num;
 
