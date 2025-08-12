@@ -1,5 +1,5 @@
 use super::ast::*;
-use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BasicBlock, FunctionData, Program, Type, Value, Function};
+use koopa::ir::{builder::{BasicBlockBuilder, LocalInstBuilder, ValueBuilder}, BasicBlock, FunctionData, Program, Type, Value, Function, BinaryOp::*};
 
 impl CompUnit {
   pub fn generate_on(&self, program: &mut Program) {
@@ -42,10 +42,41 @@ impl Block {
 impl Stmt {
   pub fn generate_on(&self, program: &mut Program, func: Function, entry_bb: BasicBlock) {
     match self {
-      Stmt::Return(value) => {
-        let ret_val = program.func_mut(func).dfg_mut().new_value().integer(*value);
+      Stmt::Return(exp) => {
+        let ret_val = exp.generate_on(program, func, entry_bb);
+        // let ret_val = program.func_mut(func).dfg_mut().new_value().integer(*value);
         let ret_inst = program.func_mut(func).dfg_mut().new_value().ret(Some(ret_val));
-        program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(ret_inst).unwrap();
+        program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(ret_inst).unwrap(); 
+      }
+    }
+  }
+}
+
+impl Exp {
+  pub fn generate_on(&self, program: &mut Program, func: Function, entry_bb: BasicBlock) -> Value {
+
+    match self {
+      Exp::Number(n) => {
+        program.func_mut(func).dfg_mut().new_value().integer(*n)
+      }
+      Exp::Unary { op, exp} => {
+        let val = exp.generate_on(program, func, entry_bb);
+
+        let inst = match op {
+          UnaryOp::Pos => return val,
+          UnaryOp::Neg => {
+            let zero = program.func_mut(func).dfg_mut().new_value().integer(0);
+            let sub_inst = program.func_mut(func).dfg_mut().new_value().binary(Sub, zero, val);
+            sub_inst
+          }
+          UnaryOp::Not => {
+            let zero = program.func_mut(func).dfg_mut().new_value().integer(0);
+            let cmp_inst = program.func_mut(func).dfg_mut().new_value().binary(Eq, val, zero);
+            cmp_inst
+          }
+        };
+        program.func_mut(func).layout_mut().bb_mut(entry_bb).insts_mut().push_key_back(inst).unwrap();
+        inst
       }
     }
   }

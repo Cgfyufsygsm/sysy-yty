@@ -35,17 +35,17 @@ struct Cli {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+  // use clap to parse arguments robustly
   let args = Cli::parse();
-  // 读取输入文件
+
   let input = read_to_string(&args.input)?;
 
-  // 调用 lalrpop 生成的 parser 解析输入文件
+  // parse the source code into an AST
   let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
-  println!("{:#?}", ast);
 
   match args.mode {
     Mode::Ast => {
-      println!("{:#?}", ast);
+      std::fs::write(&args.output, format!("{:#?}", ast))?;
     }
     Mode::Koopa => {
       let ir = frontend::Frontend::generate_ir(&ast);
