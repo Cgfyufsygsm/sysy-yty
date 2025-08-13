@@ -14,8 +14,6 @@ match {
   _
 }
 
-// 定义 CompUnit, 其返回值类型为 String
-// parser 在解析完成后的行为是返回 FuncDef 的值
 pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { func_def };
 
 FuncDef: FuncDef = {
@@ -26,7 +24,34 @@ FuncDef: FuncDef = {
 
 FuncType: FuncType = "int" => FuncType::Int;
 
-Block: Block = "{" <stmt: Stmt> "}" => Block { stmt };
+Block: Block = "{" <items: BlockItem*> "}" => Block { items };
+
+BlockItem: BlockItem = {
+  <decl: Decl> => BlockItem::Decl(decl),
+  <stmt: Stmt> => BlockItem::Stmt(stmt),
+};
+
+Decl: Decl = {
+  <const_decl: ConstDecl> => Decl::Const(const_decl),
+};
+
+ConstDecl: ConstDecl = {
+  "const" <btype: BType> <defs: Comma<ConstDef>> ";" => {
+    ConstDecl { btype, defs }
+  }
+};
+
+BType: BType = "int" => BType::Int;
+
+ConstDef: ConstDef = {
+  <ident: Ident> "=" <init: ConstInitVal> => ConstDef { ident, init },
+};
+
+ConstInitVal: ConstInitVal = {
+  <exp: ConstExp> => ConstInitVal::Exp(exp),
+};
+
+ConstExp: Exp = Exp;
 
 Stmt: Stmt = "return" <exp: Exp> ";" => Stmt::Return(exp);
 
@@ -84,6 +109,11 @@ UnaryExp: Exp = {
 PrimaryExp: Exp = {
   "(" <exp: Exp> ")" => exp,
   <num: Number> => Exp::Number(num),
+  <lval: LVal> => lval,
+}
+
+LVal: Exp = {
+  <ident: Ident> => Exp::Var(ident),
 }
 
 UnaryOp: UnaryOp = { 
@@ -105,3 +135,11 @@ IntConst: i32 = {
   r"0[0-7]*" => i32::from_str_radix(<>, 8).unwrap(),
   r"0[xX][0-9a-fA-F]+" => i32::from_str_radix(&<>[2..], 16).unwrap(),
 }
+
+// ===== 工具宏：逗号分隔 =====
+Comma<T>: Vec<T> = {
+  <mut v: (<T> ",")*> <e: T?> => match e {
+    None => v,
+    Some(e) => { v.push(e); v }
+  }
+};

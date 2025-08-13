@@ -3,7 +3,7 @@ pub mod backend;
 
 use koopa::back::KoopaGenerator;
 use lalrpop_util::lalrpop_mod;
-use std::fs::{read_to_string, File};
+use std::{fs::read_to_string, io::Cursor};
 use clap::{Parser, ValueEnum};
 
 lalrpop_mod!(sysy);
@@ -30,8 +30,12 @@ struct Cli {
     input: String,
 
     /// Output file for the generated code
-    #[arg(short = 'o', long = "output")]
-    output: String,
+    #[arg(short = 'o', long = "output", required_unless_present = "debug")]
+    output: Option<String>,
+
+    /// Print result to stdout instead of writing to a file
+    #[arg(long)]
+    debug: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,20 +46,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   // parse the source code into an AST
   let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
+  let ir = frontend::Frontend::generate_ir(&ast);
 
-  match args.mode {
+  let output = match args.mode {
     Mode::Ast => {
-      std::fs::write(&args.output, format!("{:#?}", ast))?;
+      format!("{:#?}", ast)
     }
     Mode::Koopa => {
-      let ir = frontend::Frontend::generate_ir(&ast);
-      KoopaGenerator::new(Box::new(File::create(&args.output).unwrap())).generate_on(&ir)?;
+      let mut buf = Cursor::new(Vec::<u8>::new());
+      KoopaGenerator::new(Box::new(&mut buf)).generate_on(&ir)?;
+      String::from_utf8(buf.into_inner()).unwrap()
     }
     Mode::Riscv => {
-      let ir = frontend::Frontend::generate_ir(&ast);
-      let asm = backend::Backend::generate_asm(&ir);
-      std::fs::write(&args.output, asm)?;
+      backend::Backend::generate_asm(&ir)
     }
+  };
+
+  if args.debug {
+    print!("{}", output);
+  } else {
+    std::fs::write(args.output.unwrap(), output)?;
   }
 
   Ok(())

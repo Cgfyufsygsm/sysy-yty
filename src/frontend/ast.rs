@@ -13,17 +13,50 @@ pub struct FuncDef {
 
 #[derive(Debug)]
 pub enum FuncType {
-    Int,
+  Int,
 }
 
 #[derive(Debug)]
 pub struct Block {
-    pub stmt: Stmt,
+  pub items: Vec<BlockItem>,
+}
+
+#[derive(Debug)]
+pub enum BlockItem {
+  Decl(Decl),
+  Stmt(Stmt),
+}
+
+#[derive(Debug)]
+pub enum Decl {
+  Const(ConstDecl),
+}
+
+#[derive(Debug)]
+pub struct ConstDecl {
+  pub btype: BType,
+  pub defs: Vec<ConstDef>,
+}
+
+#[derive(Debug)]
+pub enum BType {
+  Int,
+}
+
+#[derive(Debug)]
+pub struct ConstDef {
+    pub ident: String,
+    pub init: ConstInitVal,
+}
+
+#[derive(Debug)]
+pub enum ConstInitVal {
+  Exp(Exp),
 }
 
 #[derive(Debug)]
 pub enum Stmt {
-    Return(Exp),
+  Return(Exp),
 }
 
 #[derive(Debug)]
@@ -37,17 +70,18 @@ pub enum Exp {
     op: BinaryOp,
     lhs: Box<Exp>,
     rhs: Box<Exp>
-  }
+  },
+  Var(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum UnaryOp {
   Pos,
   Neg,
   Not
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BinaryOp {
   Add, Sub, Mul, Div, Mod,
   Lt, Gt, Le, Ge,
