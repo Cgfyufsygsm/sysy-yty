@@ -33,11 +33,18 @@ BlockItem: BlockItem = {
 
 Decl: Decl = {
   <const_decl: ConstDecl> => Decl::Const(const_decl),
+  <var_decl: VarDecl> => Decl::Var(var_decl),
 };
 
 ConstDecl: ConstDecl = {
   "const" <btype: BType> <defs: Comma<ConstDef>> ";" => {
     ConstDecl { btype, defs }
+  }
+};
+
+VarDecl: VarDecl = {
+  <btype: BType> <defs: Comma<VarDef>> ";" => {
+    VarDecl { btype, defs }
   }
 };
 
@@ -47,13 +54,25 @@ ConstDef: ConstDef = {
   <ident: Ident> "=" <init: ConstInitVal> => ConstDef { ident, init },
 };
 
+VarDef: VarDef = {
+  <ident: Ident> => VarDef { ident, init: None },
+  <ident: Ident> "=" <init: InitVal> => VarDef { ident, init: Some(init) },
+};
+
 ConstInitVal: ConstInitVal = {
   <exp: ConstExp> => ConstInitVal::Exp(exp),
 };
 
+InitVal: InitVal = {
+  <exp: Exp> => InitVal::Exp(exp),
+};
+
 ConstExp: Exp = Exp;
 
-Stmt: Stmt = "return" <exp: Exp> ";" => Stmt::Return(exp);
+Stmt: Stmt = {
+  "return" <exp: Exp> ";" => Stmt::Return(exp),
+  <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { lval, exp },
+};
 
 
 // ------------ Expression Parsing ------------
@@ -109,12 +128,12 @@ UnaryExp: Exp = {
 PrimaryExp: Exp = {
   "(" <exp: Exp> ")" => exp,
   <num: Number> => Exp::Number(num),
-  <lval: LVal> => lval,
-}
+  <lval: LVal> => Exp::LVal(lval),
+};
 
-LVal: Exp = {
-  <ident: Ident> => Exp::Var(ident),
-}
+LVal: LVal = {
+  <ident: Ident> => LVal::Var(ident),
+};
 
 UnaryOp: UnaryOp = { 
   "+" => UnaryOp::Pos,

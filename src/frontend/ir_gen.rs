@@ -67,11 +67,22 @@ impl GenerateIR for Decl {
   fn generate_on(&self, env: &mut Environment) {
     match self {
       Decl::Const(const_decl) => const_decl.generate_on(env),
+      Decl::Var(var_decl) => var_decl.generate_on(env),
     }
   }
 }
 
 impl GenerateIR for ConstDecl {
+  type Output = ();
+
+  fn generate_on(&self, env: &mut Environment) {
+    for def in &self.defs {
+      def.generate_on(env);
+    }
+  }
+}
+
+impl GenerateIR for VarDecl {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
@@ -95,6 +106,25 @@ impl GenerateIR for ConstDef {
   }
 }
 
+impl GenerateIR for VarDef {
+  type Output = ();
+
+  fn generate_on(&self, env: &mut Environment) {
+    let ptr = env.ctx.local_builder().alloc(Type::get_i32());
+    env.ctx.add_inst(ptr);
+
+    env.table.insert_var(&self.ident, ptr);
+
+    if let Some(init) = &self.init {
+      let val = match init {
+        InitVal::Exp(exp) => exp.fold(env).generate_on(env)
+      };
+      let store_inst = env.ctx.local_builder().store(val, ptr);
+      env.ctx.add_inst(store_inst);
+    }
+  }
+}
+
 impl GenerateIR for Stmt {
   type Output = ();
 
@@ -105,6 +135,28 @@ impl GenerateIR for Stmt {
         let ret_val = exp.generate_on(env);
         let ret_inst = env.ctx.local_builder().ret(Some(ret_val));
         env.ctx.add_inst(ret_inst);
+      }
+      Stmt::Assign { lval, exp } => {
+        let ptr = lval.generate_on(env);
+        let val = exp.fold(env).generate_on(env);
+        let store_inst = env.ctx.local_builder().store(val, ptr);
+        env.ctx.add_inst(store_inst);
+      }
+    }
+  }
+}
+
+impl GenerateIR for LVal {
+  type Output = Value;
+
+  fn generate_on(&self, env: &mut Environment) -> Value {
+    match self {
+      LVal::Var(ident) => {
+        match env.table.get(ident) {
+          Some(Variable::Var(ptr)) => *ptr,
+          Some(Variable::Const(value)) => env.ctx.local_builder().integer(*value),
+          None => panic!("Variable {} not found in symbol table", ident),
+        }
       }
     }
   }
@@ -119,10 +171,12 @@ impl Fold for Exp {
     match self {
       Exp::Number(n) => Exp::Number(*n),
 
-      Exp::Var(ident) => match env.table.get(&ident) {
-        Some(Variable::Const(value)) => Exp::Number(*value),
-        Some(Variable::Var) => Exp::Var(ident.to_string()),
-        None => panic!("Variable {} not found in symbol table", ident),
+      Exp::LVal(lval) => match lval {
+        LVal::Var(ident) => match env.table.get(&ident) {
+          Some(Variable::Const(value)) => Exp::Number(*value),
+          Some(Variable::Var(_var)) => Exp::LVal(LVal::Var(ident.to_string())),
+          None => panic!("Variable {} not found in symbol table", ident),
+        },
       },
 
       Exp::Unary { op, exp } => {
@@ -240,18 +294,21 @@ impl GenerateIR for Exp {
         inst
       }
 
-      Exp::Var(ident) => {
-        match env.table.get(ident) {
-          Some(Variable::Const(value)) => {
-            env.ctx.local_builder().integer(*value)
+      Exp::LVal(lval) => {
+        match lval {
+          LVal::Var(ident) => {
+            match env.table.get(ident) {
+              Some(Variable::Const(value)) => {
+                env.ctx.local_builder().integer(*value)
+              }
+              Some(Variable::Var(ptr)) => {
+                let load_inst = env.ctx.local_builder().load(*ptr);
+                env.ctx.add_inst(load_inst);
+                load_inst
+              }
+              None => panic!("Variable {} not found in symbol table", ident),
+            }
           }
-          // Some(Variable::Var) => {
-          //   let local = env.ctx.local_builder().local(ident.clone());
-          //   env.ctx.add_inst(local);
-          //   local
-          // }
-          // None => panic!("Variable {} not found in symbol table", ident),
-          _ => panic!("unimplemented error")
         }
       }
     }

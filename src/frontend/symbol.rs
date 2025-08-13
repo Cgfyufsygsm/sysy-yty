@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use koopa::ir::Value;
+
 #[derive(Debug, Default)]
 pub struct SymbolTable {
     scopes: Vec<HashMap<String, Variable>>,
@@ -8,7 +10,7 @@ pub struct SymbolTable {
 #[derive(Debug, Clone)]
 pub enum Variable {
   Const(i32),
-  Var,
+  Var(Value),
 }
 
 impl SymbolTable {
@@ -22,6 +24,10 @@ impl SymbolTable {
 
   pub fn insert_const(&mut self, ident: &str, value: i32) {
     self.scopes.last_mut().expect("No scope to insert into").insert(ident.to_string(), Variable::Const(value));
+  }
+
+  pub fn insert_var(&mut self, ident: &str, value: Value) {
+    self.scopes.last_mut().expect("No scope to insert into").insert(ident.to_string(), Variable::Var(value));
   }
 
   pub fn get(&self, ident: &str) -> Option<&Variable> {
