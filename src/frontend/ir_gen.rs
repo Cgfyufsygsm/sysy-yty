@@ -164,8 +164,8 @@ impl GenerateIR for If {
   type Output = ();
   
   fn generate_on(&self, env: &mut Environment) {
-    let orig_bb = env.ctx.block.expect("No current basic block when generating if");
     let cond = self.cond.fold(env).generate_on(env);
+    let orig_bb = env.ctx.block.expect("No current basic block when generating if");
 
 
     match &self.else_block {
@@ -313,31 +313,104 @@ impl GenerateIR for Exp {
       }
 
       Exp::ShortCircuit { op, lhs, rhs } => {
+      // 要求当前已经有一个 open block
+        let orig_bb = env.ctx.block.expect("No current basic block when generating short-circuit");
+
+        // eval lhs
         let lhs_val = lhs.generate_on(env);
-        let rhs_val = rhs.generate_on(env);
+        let zero = env.ctx.local_builder().integer(0);
+        let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
+        env.ctx.add_inst(lhs_bool);
+
+        // allocate a temp to hold the final boolean result (i32)
+        let res_ptr = env.ctx.local_builder().alloc(Type::get_i32());
+        env.ctx.add_inst(res_ptr);
+
         match op {
           ShortCircuitOp::And => {
-            let zero = env.ctx.local_builder().integer(0);
-            let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
-            env.ctx.add_inst(lhs_bool);
+            // blocks: rhs (when lhs true), false (when lhs false), merge
+            env.ctx.create_block(Some(fresh_bb_name("and_rhs")));
+            let rhs_bb = env.ctx.block.expect("and_rhs not set");
+            env.ctx.create_block(Some(fresh_bb_name("and_false")));
+            let false_bb = env.ctx.block.expect("and_false not set");
+            env.ctx.create_block(Some(fresh_bb_name("and_end")));
+            let merge_bb = env.ctx.block.expect("and_end not set");
+
+            // branch on lhs_bool: true -> rhs_bb, false -> false_bb
+            env.ctx.set_block(orig_bb);
+            let branch_inst = env.ctx.local_builder().branch(lhs_bool, rhs_bb, false_bb);
+            env.ctx.add_inst(branch_inst);
+            env.ctx.mark_block_terminated(orig_bb);
+
+            // rhs_bb: evaluate rhs, compute rhs_bool, store into res_ptr, jump merge
+            env.ctx.set_block(rhs_bb);
+            let rhs_val = rhs.generate_on(env);
             let rhs_bool = env.ctx.local_builder().binary(NotEq, rhs_val, zero);
             env.ctx.add_inst(rhs_bool);
-            let inst = env.ctx.local_builder().binary(And, lhs_bool, rhs_bool);
-            env.ctx.add_inst(inst);
-            inst
+            let store_rhs = env.ctx.local_builder().store(rhs_bool, res_ptr);
+            env.ctx.add_inst(store_rhs);
+            let jump_to_merge = env.ctx.local_builder().jump(merge_bb);
+            env.ctx.add_inst(jump_to_merge);
+            env.ctx.mark_block_terminated(rhs_bb);
+
+            // false_bb: store 0, jump merge
+            env.ctx.set_block(false_bb);
+            let store_false = env.ctx.local_builder().store(zero, res_ptr);
+            env.ctx.add_inst(store_false);
+            let jump_false = env.ctx.local_builder().jump(merge_bb);
+            env.ctx.add_inst(jump_false);
+            env.ctx.mark_block_terminated(false_bb);
+
+            // merge: load and return
+            env.ctx.set_block(merge_bb);
+            let load_inst = env.ctx.local_builder().load(res_ptr);
+            env.ctx.add_inst(load_inst);
+            load_inst
           }
           ShortCircuitOp::Or => {
-            let zero = env.ctx.local_builder().integer(0);
-            let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
-            env.ctx.add_inst(lhs_bool);
+            // blocks: true (when lhs true), rhs (when lhs false), merge
+            env.ctx.create_block(Some(fresh_bb_name("or_true")));
+            let true_bb = env.ctx.block.expect("or_true not set");
+            env.ctx.create_block(Some(fresh_bb_name("or_rhs")));
+            let rhs_bb = env.ctx.block.expect("or_rhs not set");
+            env.ctx.create_block(Some(fresh_bb_name("or_end")));
+            let merge_bb = env.ctx.block.expect("or_end not set");
+
+            // branch on lhs_bool: true -> true_bb, false -> rhs_bb
+            env.ctx.set_block(orig_bb);
+            let branch_inst = env.ctx.local_builder().branch(lhs_bool, true_bb, rhs_bb);
+            env.ctx.add_inst(branch_inst);
+            env.ctx.mark_block_terminated(orig_bb);
+
+            // true_bb: store 1, jump merge
+            env.ctx.set_block(true_bb);
+            let one = env.ctx.local_builder().integer(1);
+            let store_true = env.ctx.local_builder().store(one, res_ptr);
+            env.ctx.add_inst(store_true);
+            let jump_true = env.ctx.local_builder().jump(merge_bb);
+            env.ctx.add_inst(jump_true);
+            env.ctx.mark_block_terminated(true_bb);
+
+            // rhs_bb: evaluate rhs, compute rhs_bool, store into res_ptr, jump merge
+            env.ctx.set_block(rhs_bb);
+            let rhs_val = rhs.generate_on(env);
             let rhs_bool = env.ctx.local_builder().binary(NotEq, rhs_val, zero);
             env.ctx.add_inst(rhs_bool);
-            let inst = env.ctx.local_builder().binary(Or, lhs_bool, rhs_bool);
-            env.ctx.add_inst(inst);
-            inst
+            let store_rhs = env.ctx.local_builder().store(rhs_bool, res_ptr);
+            env.ctx.add_inst(store_rhs);
+            let jump_to_merge = env.ctx.local_builder().jump(merge_bb);
+            env.ctx.add_inst(jump_to_merge);
+            env.ctx.mark_block_terminated(rhs_bb);
+
+            // merge: load and return
+            env.ctx.set_block(merge_bb);
+            let load_inst = env.ctx.local_builder().load(res_ptr);
+            env.ctx.add_inst(load_inst);
+            load_inst
           }
         }
       }
+
 
       Exp::LVal(lval) => {
         match lval {

@@ -75,6 +75,23 @@ impl Fold for Exp {
             ShortCircuitOp::And => ((*a != 0) && (*b != 0)) as i32,
             ShortCircuitOp::Or => ((*a != 0) || (*b != 0)) as i32,
           })
+        } else if let Exp::Number(a) = &l {
+          match op {
+            ShortCircuitOp::And => {
+              if *a != 0 {
+                r
+              } else {
+                Exp::Number(0)
+              }
+            }
+            ShortCircuitOp::Or => {
+              if *a != 0 {
+                Exp::Number(1)
+              } else {
+                r
+              }
+            }
+          }
         } else {
           Exp::ShortCircuit { op: op.clone(), lhs: Box::new(l), rhs: Box::new(r) }
         }
