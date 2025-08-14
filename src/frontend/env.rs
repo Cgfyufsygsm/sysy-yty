@@ -27,6 +27,19 @@ impl Context {
     self.block = Some(bb);
   }
 
+  pub fn clear_block(&mut self) {
+    self.block = None;
+  }
+
+  pub fn current_open_block(&mut self) -> Option<BasicBlock> {
+    if let Some(bb) = self.block {
+      if !self.is_block_terminated(bb) {
+        return Some(bb);
+      }
+    }
+    None
+  }
+
   pub fn func_data(&mut self) -> &mut FunctionData {
     self.program.func_mut(self.func.expect("No function set"))
   }

@@ -136,9 +136,9 @@ RelExp: Exp = {
 };
 
 AddExp: Exp = {
-  <lhs: MulExp> "+" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-  <lhs: MulExp> "-" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <m: MulExp> => m,
+  <lhs: AddExp> "+" <rhs: MulExp> => Exp::Binary { op: BinaryOp::Add, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: AddExp> "-" <rhs: MulExp> => Exp::Binary { op: BinaryOp::Sub, lhs: Box::new(lhs), rhs: Box::new(rhs) },
 }
 
 MulExp: Exp = {

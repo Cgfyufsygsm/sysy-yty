@@ -127,12 +127,17 @@ impl GenerateIR for Stmt {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
+    if env.ctx.current_open_block().is_none() {
+      // If no block is open, we cannot generate any instructions.
+      return;
+    }
     match self {
       Stmt::Return(exp) => {
         let exp = exp.fold(env);
         let ret_val = exp.generate_on(env);
         let ret_inst = env.ctx.local_builder().ret(Some(ret_val));
         env.ctx.add_inst(ret_inst);
+        env.ctx.mark_block_terminated(env.ctx.block.expect("No block set"));
       }
       Stmt::Assign { lval, exp } => {
         let ptr = lval.generate_on(env);
@@ -161,52 +166,83 @@ impl GenerateIR for If {
   fn generate_on(&self, env: &mut Environment) {
     let orig_bb = env.ctx.block.expect("No current basic block when generating if");
     let cond = self.cond.fold(env).generate_on(env);
-    
-    let then_name = fresh_bb_name("then");
-    env.ctx.create_block(Some(then_name));
-    let then_bb = env.ctx.block.expect("Failed to create 'then' block");
 
-    let else_name = fresh_bb_name("else");
-    env.ctx.create_block(Some(else_name));
-    let else_bb = env.ctx.block.expect("Failed to create 'else' block");
 
-    let end_name = fresh_bb_name("end");
-    env.ctx.create_block(Some(end_name));
-    let end_bb = env.ctx.block.expect("Failed to create 'end' block");
+    match &self.else_block {
+      None => {
+        env.ctx.create_block(Some(fresh_bb_name("then")));
+        let then_bb = env.ctx.block.expect("Failed to create 'then' block");
 
-    // set back to original block and generate branch instruction
-    env.ctx.set_block(orig_bb);
-    let branch_inst = env.ctx.local_builder().branch(cond, then_bb, else_bb);
-    env.ctx.add_inst(branch_inst);
-    env.ctx.mark_block_terminated(orig_bb);
+        env.ctx.create_block(Some(fresh_bb_name("end")));
+        let end_bb = env.ctx.block.expect("Failed to create 'end' block");
 
-    // Generate the 'then' block
-    env.ctx.set_block(then_bb);
-    self.then_block.generate_on(env);
-    if !env.ctx.is_block_terminated(then_bb) {
-      let jump_inst = env.ctx.local_builder().jump(end_bb);
-      env.ctx.add_inst(jump_inst);
-      env.ctx.mark_block_terminated(then_bb);
-    }
+        env.ctx.set_block(orig_bb);
+        let branch_inst = env.ctx.local_builder().branch(cond, then_bb, end_bb);
+        env.ctx.add_inst(branch_inst);
+        env.ctx.mark_block_terminated(orig_bb);
 
-    // Generate the 'else' block if it exists
-    env.ctx.set_block(else_bb);
-    if let Some(else_stmt) = &self.else_block {
-      else_stmt.generate_on(env);
+        // then
+        env.ctx.set_block(then_bb);
+        self.then_block.generate_on(env);
+        let then_open = env.ctx.current_open_block();
 
-      if !env.ctx.is_block_terminated(else_bb) {
-        let jump_inst = env.ctx.local_builder().jump(end_bb);
-        env.ctx.add_inst(jump_inst);
-        env.ctx.mark_block_terminated(else_bb);
+        if let Some(bb) = then_open {
+          env.ctx.set_block(bb);
+          let jump_inst = env.ctx.local_builder().jump(end_bb);
+          env.ctx.add_inst(jump_inst);
+          env.ctx.mark_block_terminated(bb);
+        }
+
+        env.ctx.set_block(end_bb);
       }
-    } else {
-      // If there's no else block, we still need to jump to the end
-      let jump_inst = env.ctx.local_builder().jump(end_bb);
-      env.ctx.add_inst(jump_inst);
-      env.ctx.mark_block_terminated(else_bb);
-    }
 
-    env.ctx.set_block(end_bb);
+      Some(else_stmt) => {
+        env.ctx.create_block(Some(fresh_bb_name("then")));
+        let then_bb = env.ctx.block.expect("then not set");
+
+        env.ctx.create_block(Some(fresh_bb_name("else")));
+        let else_bb = env.ctx.block.expect("else not set");
+
+        env.ctx.set_block(orig_bb);
+        let branch_inst = env.ctx.local_builder().branch(cond, then_bb, else_bb);
+        env.ctx.add_inst(branch_inst);
+        env.ctx.mark_block_terminated(orig_bb);
+
+        // then
+        env.ctx.set_block(then_bb);
+        self.then_block.generate_on(env);
+        let then_open = env.ctx.current_open_block(); // 保存 then 的开放尾块
+
+        env.ctx.set_block(else_bb);
+        else_stmt.generate_on(env);
+        let else_open = env.ctx.current_open_block(); // 保存 else 的开放尾块
+
+        if then_open.is_none() && else_open.is_none() {
+          // 如果两个分支都没有开放尾块，则不需要创建结束块
+          env.ctx.clear_block();
+          return;
+        }
+
+        env.ctx.create_block(Some(fresh_bb_name("end")));
+        let merge_bb = env.ctx.block.expect("end not set");
+
+        if let Some(then_bb) = then_open {
+          env.ctx.set_block(then_bb);
+          let jump_inst = env.ctx.local_builder().jump(merge_bb);
+          env.ctx.add_inst(jump_inst);
+          env.ctx.mark_block_terminated(then_bb);
+        }
+
+        if let Some(else_bb) = else_open {
+          env.ctx.set_block(else_bb);
+          let jump_inst = env.ctx.local_builder().jump(merge_bb);
+          env.ctx.add_inst(jump_inst);
+          env.ctx.mark_block_terminated(else_bb);
+        }
+
+        env.ctx.set_block(merge_bb);
+      }
+    }
   }
 }
 
@@ -277,61 +313,28 @@ impl GenerateIR for Exp {
       }
 
       Exp::ShortCircuit { op, lhs, rhs } => {
-        let tmp_name = fresh_tmp_name();
-        let result_ptr = env.ctx.local_builder().alloc(Type::get_i32());
-        env.ctx.add_inst(result_ptr);
-        // alloc tmp res ptr
-        env.table.insert_var(&tmp_name, result_ptr);
+        let lhs_val = lhs.generate_on(env);
+        let rhs_val = rhs.generate_on(env);
         match op {
           ShortCircuitOp::And => {
-            // if lhs != 0, then tmp <- rhs != 0
-            let then_assign = Stmt::Assign {
-              lval: LVal::Var(tmp_name.clone()),
-              exp: Exp::Binary {
-                op: BinaryOp::Ne,
-                lhs: rhs.clone(),
-                rhs: Box::new(Exp::Number(0)),
-              },
-            };
-            // else tmp <- 0
-            let else_assign = Stmt::Assign {
-              lval: LVal::Var(tmp_name.clone()),
-              exp: Exp::Number(0),
-            };
-
-            let cond = Exp::Binary { op: BinaryOp::Ne, lhs: lhs.clone(), rhs: Box::new(Exp::Number(0)) };
-
-            If {
-              cond,
-              then_block: Box::new(then_assign),
-              else_block: Some(Box::new(else_assign)),
-            }.generate_on(env);
-            env.ctx.local_builder().load(result_ptr)
+            let zero = env.ctx.local_builder().integer(0);
+            let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
+            env.ctx.add_inst(lhs_bool);
+            let rhs_bool = env.ctx.local_builder().binary(NotEq, rhs_val, zero);
+            env.ctx.add_inst(rhs_bool);
+            let inst = env.ctx.local_builder().binary(And, lhs_bool, rhs_bool);
+            env.ctx.add_inst(inst);
+            inst
           }
           ShortCircuitOp::Or => {
-            // if lhs != 0, then tmp <- 1
-            let then_assign = Stmt::Assign {
-              lval: LVal::Var(tmp_name.clone()),
-              exp: Exp::Number(1),
-            };
-            // else tmp <- rhs != 0
-            let else_assign = Stmt::Assign {
-              lval: LVal::Var(tmp_name.clone()),
-              exp: Exp::Binary {
-                op: BinaryOp::Ne,
-                lhs: rhs.clone(),
-                rhs: Box::new(Exp::Number(0)),
-              },
-            };
-
-            let cond = Exp::Binary { op: BinaryOp::Ne, lhs: lhs.clone(), rhs: Box::new(Exp::Number(0)) };
-
-            If {
-              cond,
-              then_block: Box::new(then_assign),
-              else_block: Some(Box::new(else_assign)),
-            }.generate_on(env);
-            env.ctx.local_builder().load(result_ptr)
+            let zero = env.ctx.local_builder().integer(0);
+            let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
+            env.ctx.add_inst(lhs_bool);
+            let rhs_bool = env.ctx.local_builder().binary(NotEq, rhs_val, zero);
+            env.ctx.add_inst(rhs_bool);
+            let inst = env.ctx.local_builder().binary(Or, lhs_bool, rhs_bool);
+            env.ctx.add_inst(inst);
+            inst
           }
         }
       }

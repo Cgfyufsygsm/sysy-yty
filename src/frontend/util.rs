@@ -7,7 +7,7 @@ static TMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub fn fresh_bb_name(prefix: &str) -> String {
   let id = BB_COUNTER.fetch_add(1, Ordering::Relaxed);
-  format!("%{}{}", prefix, id)
+  format!("%{}_{}", prefix, id)
 }
 
 pub fn fresh_tmp_name() -> String {
