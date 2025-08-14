@@ -1,4 +1,4 @@
-use crate::frontend::{env::Environment, symbol::Variable};
+use crate::frontend::{env::Environment, symbol::Variable, util::{Fold, fresh_bb_name, fresh_tmp_name}};
 
 use super::ast::*;
 use koopa::ir::{builder::{LocalInstBuilder, ValueBuilder}, FunctionData, Type, Value, BinaryOp::*};
@@ -148,7 +148,65 @@ impl GenerateIR for Stmt {
       Stmt::Block(block) => {
         block.generate_on(env);
       }
+      Stmt::If(if_stmt) => {
+        if_stmt.generate_on(env);
+      }
     }
+  }
+}
+
+impl GenerateIR for If {
+  type Output = ();
+  
+  fn generate_on(&self, env: &mut Environment) {
+    let orig_bb = env.ctx.block.expect("No current basic block when generating if");
+    let cond = self.cond.fold(env).generate_on(env);
+    
+    let then_name = fresh_bb_name("then");
+    env.ctx.create_block(Some(then_name));
+    let then_bb = env.ctx.block.expect("Failed to create 'then' block");
+
+    let else_name = fresh_bb_name("else");
+    env.ctx.create_block(Some(else_name));
+    let else_bb = env.ctx.block.expect("Failed to create 'else' block");
+
+    let end_name = fresh_bb_name("end");
+    env.ctx.create_block(Some(end_name));
+    let end_bb = env.ctx.block.expect("Failed to create 'end' block");
+
+    // set back to original block and generate branch instruction
+    env.ctx.set_block(orig_bb);
+    let branch_inst = env.ctx.local_builder().branch(cond, then_bb, else_bb);
+    env.ctx.add_inst(branch_inst);
+    env.ctx.mark_block_terminated(orig_bb);
+
+    // Generate the 'then' block
+    env.ctx.set_block(then_bb);
+    self.then_block.generate_on(env);
+    if !env.ctx.is_block_terminated(then_bb) {
+      let jump_inst = env.ctx.local_builder().jump(end_bb);
+      env.ctx.add_inst(jump_inst);
+      env.ctx.mark_block_terminated(then_bb);
+    }
+
+    // Generate the 'else' block if it exists
+    env.ctx.set_block(else_bb);
+    if let Some(else_stmt) = &self.else_block {
+      else_stmt.generate_on(env);
+
+      if !env.ctx.is_block_terminated(else_bb) {
+        let jump_inst = env.ctx.local_builder().jump(end_bb);
+        env.ctx.add_inst(jump_inst);
+        env.ctx.mark_block_terminated(else_bb);
+      }
+    } else {
+      // If there's no else block, we still need to jump to the end
+      let jump_inst = env.ctx.local_builder().jump(end_bb);
+      env.ctx.add_inst(jump_inst);
+      env.ctx.mark_block_terminated(else_bb);
+    }
+
+    env.ctx.set_block(end_bb);
   }
 }
 
@@ -162,63 +220,6 @@ impl GenerateIR for LVal {
           Some(Variable::Var(ptr)) => *ptr,
           Some(Variable::Const(value)) => env.ctx.local_builder().integer(*value),
           None => panic!("Variable {} not found in symbol table", ident),
-        }
-      }
-    }
-  }
-}
-
-trait Fold {
-  fn fold(&self, env: &mut Environment) -> Self;
-}
-
-impl Fold for Exp {
-  fn fold(&self, env: &mut Environment) -> Exp {
-    match self {
-      Exp::Number(n) => Exp::Number(*n),
-
-      Exp::LVal(lval) => match lval {
-        LVal::Var(ident) => match env.table.get(&ident) {
-          Some(Variable::Const(value)) => Exp::Number(*value),
-          Some(Variable::Var(_var)) => Exp::LVal(LVal::Var(ident.to_string())),
-          None => panic!("Variable {} not found in symbol table", ident),
-        },
-      },
-
-      Exp::Unary { op, exp } => {
-        let e = exp.fold(env);
-        if let Exp::Number(n) = e {
-          Exp::Number(match op {
-            UnaryOp::Pos => n,
-            UnaryOp::Neg => -n,
-            UnaryOp::Not => (n == 0) as i32,
-          })
-        } else {
-          Exp::Unary { op: op.clone(), exp: Box::new(e) }
-        }
-      },
-
-      Exp::Binary { op, lhs, rhs } => {
-        let l = lhs.fold(env);
-        let r = rhs.fold(env);
-        if let (Exp::Number(a), Exp::Number(b)) = (&l, &r) {
-          Exp::Number(match op {
-            BinaryOp::Add => a + b,
-            BinaryOp::Sub => a - b,
-            BinaryOp::Mul => a * b,
-            BinaryOp::Div => a / b,
-            BinaryOp::Mod => a % b,
-            BinaryOp::Lt => (a < b) as i32,
-            BinaryOp::Gt => (a > b) as i32,
-            BinaryOp::Le => (a <= b) as i32,
-            BinaryOp::Ge => (a >= b) as i32,
-            BinaryOp::Eq => (a == b) as i32,
-            BinaryOp::Ne => (a != b) as i32,
-            BinaryOp::And => ((*a != 0) && (*b != 0)) as i32,
-            BinaryOp::Or => ((*a != 0) || (*b != 0)) as i32,
-          })
-        } else {
-          Exp::Binary { op: op.clone(), lhs: Box::new(l), rhs: Box::new(r) }
         }
       }
     }
@@ -257,28 +258,6 @@ impl GenerateIR for Exp {
         let lhs_val = lhs.generate_on(env);
         let rhs_val = rhs.generate_on(env);
 
-        if let BinaryOp::And = op {
-          let zero = env.ctx.local_builder().integer(0);
-          let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
-          env.ctx.add_inst(lhs_bool);
-          let rhs_bool = env.ctx.local_builder().binary(NotEq, rhs_val, zero);
-          env.ctx.add_inst(rhs_bool);
-          let inst = env.ctx.local_builder().binary(And, lhs_bool, rhs_bool);
-          env.ctx.add_inst(inst);
-          return inst;
-        }
-
-        if let BinaryOp::Or = op {
-          let zero = env.ctx.local_builder().integer(0);
-          let lhs_bool = env.ctx.local_builder().binary(NotEq, lhs_val, zero);
-          env.ctx.add_inst(lhs_bool);
-          let rhs_bool = env.ctx.local_builder().binary(NotEq, rhs_val, zero);
-          env.ctx.add_inst(rhs_bool);
-          let inst = env.ctx.local_builder().binary(Or, lhs_bool, rhs_bool);
-          env.ctx.add_inst(inst);
-          return inst;
-        }
-
         let kind = match op {
           BinaryOp::Add => Add,
           BinaryOp::Sub => Sub,
@@ -291,13 +270,70 @@ impl GenerateIR for Exp {
           BinaryOp::Ge => Ge,
           BinaryOp::Eq => Eq,
           BinaryOp::Ne => NotEq,
-          _ => {
-            panic!("Unsupported binary operation: {:?}", op);
-          }
         };
         let inst = env.ctx.local_builder().binary(kind, lhs_val, rhs_val);
         env.ctx.add_inst(inst);
         inst
+      }
+
+      Exp::ShortCircuit { op, lhs, rhs } => {
+        let tmp_name = fresh_tmp_name();
+        let result_ptr = env.ctx.local_builder().alloc(Type::get_i32());
+        env.ctx.add_inst(result_ptr);
+        // alloc tmp res ptr
+        env.table.insert_var(&tmp_name, result_ptr);
+        match op {
+          ShortCircuitOp::And => {
+            // if lhs != 0, then tmp <- rhs != 0
+            let then_assign = Stmt::Assign {
+              lval: LVal::Var(tmp_name.clone()),
+              exp: Exp::Binary {
+                op: BinaryOp::Ne,
+                lhs: rhs.clone(),
+                rhs: Box::new(Exp::Number(0)),
+              },
+            };
+            // else tmp <- 0
+            let else_assign = Stmt::Assign {
+              lval: LVal::Var(tmp_name.clone()),
+              exp: Exp::Number(0),
+            };
+
+            let cond = Exp::Binary { op: BinaryOp::Ne, lhs: lhs.clone(), rhs: Box::new(Exp::Number(0)) };
+
+            If {
+              cond,
+              then_block: Box::new(then_assign),
+              else_block: Some(Box::new(else_assign)),
+            }.generate_on(env);
+            env.ctx.local_builder().load(result_ptr)
+          }
+          ShortCircuitOp::Or => {
+            // if lhs != 0, then tmp <- 1
+            let then_assign = Stmt::Assign {
+              lval: LVal::Var(tmp_name.clone()),
+              exp: Exp::Number(1),
+            };
+            // else tmp <- rhs != 0
+            let else_assign = Stmt::Assign {
+              lval: LVal::Var(tmp_name.clone()),
+              exp: Exp::Binary {
+                op: BinaryOp::Ne,
+                lhs: rhs.clone(),
+                rhs: Box::new(Exp::Number(0)),
+              },
+            };
+
+            let cond = Exp::Binary { op: BinaryOp::Ne, lhs: lhs.clone(), rhs: Box::new(Exp::Number(0)) };
+
+            If {
+              cond,
+              then_block: Box::new(then_assign),
+              else_block: Some(Box::new(else_assign)),
+            }.generate_on(env);
+            env.ctx.local_builder().load(result_ptr)
+          }
+        }
       }
 
       Exp::LVal(lval) => {

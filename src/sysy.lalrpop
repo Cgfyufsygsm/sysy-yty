@@ -10,6 +10,11 @@ match {
   r"//[^\n\r]*[\n\r]*" => {},
   // 添加多行注释的处理
   r"/\*([^*]|\*[^/])*\*/" => {},
+
+  r"if" => "if",
+  r"else" => "else",
+  r"int" => "int",
+
   // 剩下的情况采用默认方式处理
   _
 }
@@ -70,11 +75,32 @@ InitVal: InitVal = {
 ConstExp: Exp = Exp;
 
 Stmt: Stmt = {
+  <m: MatchedStmt> => m,
+  <u: UnmatchedStmt> => u
+};
+
+MatchedStmt: Stmt = {
+  // 不含 if/else 的也包含在这里
   "return" <exp: Exp> ";" => Stmt::Return(exp),
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { lval, exp },
   <exp: Exp?> ";" => Stmt::Exp(exp),
   <block: Block> => Stmt::Block(block),
+
+  "if" "(" <cond: Exp> ")" <then_: MatchedStmt> "else" <else_: MatchedStmt> => {
+    Stmt::If(If { cond, then_block: Box::new(then_), else_block: Some(Box::new(else_)) })
+  },
 };
+
+UnmatchedStmt: Stmt = {
+  // if without else
+  "if" "(" <cond: Exp> ")" <then_: Stmt> => {
+    Stmt::If( If { cond, then_block: Box::new(then_), else_block: None })
+  },
+  // if (cond) MatchedStmt else UnmatchedStmt
+  // （用于表达 "if (...) matched_stmt else unmatched_stmt" 的情形）
+  "if" "(" <cond: Exp> ")" <then_m: MatchedStmt> "else" <u: UnmatchedStmt>
+    => Stmt::If(If { cond, then_block: Box::new(then_m), else_block: Some(Box::new(u)) }),
+}
 
 
 // ------------ Expression Parsing ------------
@@ -83,13 +109,13 @@ Exp: Exp = LOrExp;
 
 // LOrExp := LAndExp | LOrExp "||" LAndExp
 LOrExp: Exp = {
-  <lhs: LOrExp> "||" <rhs: LAndExp> => Exp::Binary { op: BinaryOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: LOrExp> "||" <rhs: LAndExp> => Exp::ShortCircuit { op: ShortCircuitOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <a: LAndExp> => a,
 };
 
 // LAndExp := EqExp | LAndExp "&&" EqExp
 LAndExp: Exp = {
-  <lhs: LAndExp> "&&" <rhs: EqExp> => Exp::Binary { op: BinaryOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
+  <lhs: LAndExp> "&&" <rhs: EqExp> => Exp::ShortCircuit { op: ShortCircuitOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <e: EqExp> => e,
 };
 

@@ -52,8 +52,8 @@ pub enum BType {
 
 #[derive(Debug)]
 pub struct ConstDef {
-    pub ident: String,
-    pub init: ConstInitVal,
+  pub ident: String,
+  pub init: ConstInitVal,
 }
 
 #[derive(Debug)]
@@ -78,14 +78,22 @@ pub enum Stmt {
   Assign { lval: LVal, exp: Exp },
   Exp(Option<Exp>),
   Block(Block),
+  If(If)
 }
 
 #[derive(Debug)]
+pub struct If {
+  pub cond: Exp,
+  pub then_block: Box<Stmt>,
+  pub else_block: Option<Box<Stmt>>,
+}
+
+#[derive(Debug, Clone)]
 pub enum LVal {
   Var(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Exp {
   Number(i32),
   Unary {
@@ -94,6 +102,11 @@ pub enum Exp {
   },
   Binary {
     op: BinaryOp,
+    lhs: Box<Exp>,
+    rhs: Box<Exp>
+  },
+  ShortCircuit {
+    op: ShortCircuitOp,
     lhs: Box<Exp>,
     rhs: Box<Exp>
   },
@@ -112,5 +125,10 @@ pub enum BinaryOp {
   Add, Sub, Mul, Div, Mod,
   Lt, Gt, Le, Ge,
   Eq, Ne,
-  And, Or,
+}
+
+#[derive(Debug, Clone)]
+pub enum ShortCircuitOp {
+  And,
+  Or,
 }

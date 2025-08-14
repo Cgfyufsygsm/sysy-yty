@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::frontend::symbol::SymbolTable;
 use koopa::ir::{builder::{BasicBlockBuilder, LocalBuilder}, BasicBlock, Function, FunctionData, Program, Value};
 
@@ -12,6 +14,8 @@ pub struct Context {
   pub program: Program,
   pub func: Option<Function>,
   pub block: Option<BasicBlock>,
+
+  pub terminated_bbs: HashSet<BasicBlock>,
 }
 
 impl Context {
@@ -40,5 +44,13 @@ impl Context {
   pub fn add_inst(&mut self, inst: Value) {
     let block = self.block.expect("No block set");
     self.func_data().layout_mut().bb_mut(block).insts_mut().push_key_back(inst).unwrap();
+  }
+
+  pub fn mark_block_terminated(&mut self, bb: BasicBlock) {
+    self.terminated_bbs.insert(bb);
+  }
+
+  pub fn is_block_terminated(&self, bb: BasicBlock) -> bool {
+    self.terminated_bbs.contains(&bb)
   }
 }
