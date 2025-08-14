@@ -63,15 +63,20 @@ impl GenerateAsm for FunctionData {
       asm.push_str("  add   sp, sp, t0\n");
     }
 
-    for (_bb, node) in self.layout().bbs() {
+    for (bb, node) in self.layout().bbs() {
+      let bb_name = self.dfg().bb(*bb).name();
+      match bb_name {
+        Some(name) => asm.push_str(&format!("{}:\n", name.trim_start_matches(&['@', '%'][..]))),
+        None => panic!("Basic block without name"),
+      }
       for &inst in node.insts().keys() {
-        // release unused registers
         let value_data = self.dfg().value(inst);
         asm.push_str(&value_data.generate_asm(self, inst, &layout));
       }
     }
 
     // ===== epilogue =====
+    asm.push_str(&format!("{}_ret:\n", func_name));
     if layout.size <= 2047 {
       asm.push_str(&format!("  addi  sp, sp, {}\n", layout.size));
     } else {
@@ -161,6 +166,22 @@ impl GenerateStackAsm for ValueData {
       ValueKind::Binary(bin) => {
         asm.push_str(&bin.generate_asm(func_data, inst, layout));
       }
+
+      ValueKind::Branch(br) => {
+        let cond = br.cond();
+        let (cond_asm, cond_reg) = load_operand_to_reg(func_data, cond, layout, "t0");
+        asm.push_str(&cond_asm);
+        let then_bb = func_data.dfg().bb(br.true_bb()).name().as_ref().unwrap();
+        let else_bb = func_data.dfg().bb(br.false_bb()).name().as_ref().unwrap();
+        asm.push_str(&format!("  bnez  {}, {}\n", cond_reg, then_bb.trim_start_matches(&['@', '%'][..])));
+        asm.push_str(&format!("  j     {}\n", else_bb.trim_start_matches(&['@', '%'][..])));
+      }
+
+      ValueKind::Jump(jump) => {
+        let target = func_data.dfg().bb(jump.target()).name().as_ref().unwrap();
+        asm.push_str(&format!("  j     {}\n", target.trim_start_matches(&['@', '%'][..])));
+      }
+
       default => {
         // Handle other value kinds if necessary
         asm.push_str(&format!("  ; Unhandled value kind: {:?}\n", default));
@@ -189,6 +210,8 @@ impl GenerateStackAsm for Return {
           asm.push_str(&format!("  lw    a0, {}\n", sp_off(off)));
         }
       }
+      let func_name = func_data.name().trim_start_matches('@');
+      asm.push_str(&format!("  j     {}_ret\n", func_name));
     } else {
       // ret 没有值
       panic!("unimplemented error")
@@ -222,7 +245,7 @@ impl GenerateStackAsm for Binary {
       Add => "add", Sub => "sub", Mul => "mul", Div => "div",
       Mod => "rem", And => "and", Or => "or", Xor => "xor",
       Shl => "sll", Shr => "srl", Sar => "sra",
-      Eq => "seq", NotEq => "sne", Lt => "slt", Le => "sle",
+      Eq => "seqz", NotEq => "snez", Lt => "slt", Le => "sle",
       Gt => "sgt", Ge => "sge",
     };
 
