@@ -21,8 +21,6 @@ impl GenerateIR for FuncDef {
 
   fn generate_on(&self, env: &mut Environment) {
     // Create a new function.
-    env.table.enter_scope();
-
     let func_data = FunctionData::new(
       format!("@{}", self.ident),
       vec![],
@@ -37,17 +35,17 @@ impl GenerateIR for FuncDef {
 
     // Generate IR for the block.
     self.block.generate_on(env);
-    
-    env.table.leave_scope();
   }
 }
 
 impl GenerateIR for Block {
   type Output = ();
   fn generate_on(&self, env: &mut Environment) {
+    env.table.enter_scope();
     for item in &self.items {
       item.generate_on(env);
     }
+    env.table.leave_scope();
   }
 }
 
@@ -141,6 +139,14 @@ impl GenerateIR for Stmt {
         let val = exp.fold(env).generate_on(env);
         let store_inst = env.ctx.local_builder().store(val, ptr);
         env.ctx.add_inst(store_inst);
+      }
+      Stmt::Exp(opt_exp) => {
+        if let Some(e) = opt_exp {
+          e.fold(env).generate_on(env);
+        }
+      }
+      Stmt::Block(block) => {
+        block.generate_on(env);
       }
     }
   }

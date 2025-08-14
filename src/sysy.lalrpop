@@ -72,6 +72,8 @@ ConstExp: Exp = Exp;
 Stmt: Stmt = {
   "return" <exp: Exp> ";" => Stmt::Return(exp),
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { lval, exp },
+  <exp: Exp?> ";" => Stmt::Exp(exp),
+  <block: Block> => Stmt::Block(block),
 };
 
 

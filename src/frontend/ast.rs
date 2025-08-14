@@ -76,6 +76,8 @@ pub enum InitVal {
 pub enum Stmt {
   Return(Exp),
   Assign { lval: LVal, exp: Exp },
+  Exp(Option<Exp>),
+  Block(Block),
 }
 
 #[derive(Debug)]
