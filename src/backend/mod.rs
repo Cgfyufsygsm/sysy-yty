@@ -1,4 +1,7 @@
 pub mod asm_gen;
+pub mod frame;
+pub mod env;
+pub mod util;
 
 use crate::backend::asm_gen::GenerateAsm;
 

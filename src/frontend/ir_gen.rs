@@ -1,6 +1,6 @@
 use core::panic;
 
-use crate::frontend::{env::Environment, symbol::Variable, util::{Fold, fresh_bb_name, fresh_tmp_name}};
+use crate::frontend::{env::Environment, symbol::Variable, util::{Fold, fresh_bb_name}};
 
 use super::ast::*;
 use koopa::ir::{builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp::*, FunctionData, Type, Value};
