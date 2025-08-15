@@ -17,49 +17,61 @@ match {
   r"continue" => "continue",
   r"break" => "break",
   r"int" => "int",
+  r"void" => "void",
+  r"return" => "return",
 
   // 剩下的情况采用默认方式处理
   _
 }
 
-pub CompUnit: CompUnit = <func_def: FuncDef> => CompUnit { func_def };
-
-FuncDef: FuncDef = {
-  <func_type: FuncType> <ident: Ident> "(" ")" <block: Block> => {
-    FuncDef { func_type, ident, block }
-  }
+pub CompUnit: CompUnit = {
+  <comp_items: CompItem*> => CompUnit { <> }
 }
 
-FuncType: FuncType = "int" => FuncType::Int;
+CompItem: CompItem = {
+  <FuncDef> => CompItem::FuncDef(<>),
+  <Decl> => CompItem::Decl(<>)
+}
 
-Block: Block = "{" <items: BlockItem*> "}" => Block { items };
+FuncDef: FuncDef = {
+  <btype: BType> <ident: Ident> "(" <params: Comma<FuncParam>> ")" <block: Block> => FuncDef { <> }
+}
+
+FuncParam: FuncParam = {
+  <btype: BType> <ident: Ident> => FuncParam { <> }
+}
+
+Block: Block = "{" <items: BlockItem*> "}" => Block { <> };
 
 BlockItem: BlockItem = {
-  <decl: Decl> => BlockItem::Decl(decl),
-  <stmt: Stmt> => BlockItem::Stmt(stmt),
+  <Decl> => BlockItem::Decl(<>),
+  <Stmt> => BlockItem::Stmt(<>),
 };
 
 Decl: Decl = {
-  <const_decl: ConstDecl> => Decl::Const(const_decl),
-  <var_decl: VarDecl> => Decl::Var(var_decl),
+  <ConstDecl> => Decl::Const(<>),
+  <VarDecl> => Decl::Var(<>),
 };
 
 ConstDecl: ConstDecl = {
   "const" <btype: BType> <defs: Comma<ConstDef>> ";" => {
-    ConstDecl { btype, defs }
+    ConstDecl { <> }
   }
 };
 
 VarDecl: VarDecl = {
   <btype: BType> <defs: Comma<VarDef>> ";" => {
-    VarDecl { btype, defs }
+    VarDecl { <> }
   }
 };
 
-BType: BType = "int" => BType::Int;
+BType: BType = {
+  "void" => BType::Void,
+  "int" => BType::Int,
+};
 
 ConstDef: ConstDef = {
-  <ident: Ident> "=" <init: ConstInitVal> => ConstDef { ident, init },
+  <ident: Ident> "=" <init: ConstInitVal> => ConstDef { <> },
 };
 
 VarDef: VarDef = {
@@ -68,26 +80,26 @@ VarDef: VarDef = {
 };
 
 ConstInitVal: ConstInitVal = {
-  <exp: ConstExp> => ConstInitVal::Exp(exp),
+  <ConstExp> => ConstInitVal::Exp(<>),
 };
 
 InitVal: InitVal = {
-  <exp: Exp> => InitVal::Exp(exp),
+  <Exp> => InitVal::Exp(<>),
 };
 
 ConstExp: Exp = Exp;
 
 Stmt: Stmt = {
-  <m: MatchedStmt> => m,
-  <u: UnmatchedStmt> => u
+  <MatchedStmt> => <>,
+  <UnmatchedStmt> => <>
 };
 
 MatchedStmt: Stmt = {
   // 不含 if/else 的也包含在这里
-  "return" <exp: Exp> ";" => Stmt::Return(exp),
-  <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { lval, exp },
-  <exp: Exp?> ";" => Stmt::Exp(exp),
-  <block: Block> => Stmt::Block(block),
+  "return" <Exp?> ";" => Stmt::Return(<>),
+  <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { <> },
+  <Exp?> ";" => Stmt::Exp(<>),
+  <Block> => Stmt::Block(<>),
   "break" ";" => Stmt::Break(Break),
   "continue" ";" => Stmt::Continue(Continue),
 
@@ -122,20 +134,20 @@ Exp: Exp = LOrExp;
 // LOrExp := LAndExp | LOrExp "||" LAndExp
 LOrExp: Exp = {
   <lhs: LOrExp> "||" <rhs: LAndExp> => Exp::ShortCircuit { op: ShortCircuitOp::Or, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-  <a: LAndExp> => a,
+  <LAndExp> => <>,
 };
 
 // LAndExp := EqExp | LAndExp "&&" EqExp
 LAndExp: Exp = {
   <lhs: LAndExp> "&&" <rhs: EqExp> => Exp::ShortCircuit { op: ShortCircuitOp::And, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-  <e: EqExp> => e,
+  <EqExp> => <>,
 };
 
 // EqExp := RelExp | EqExp ("==" | "!=") RelExp
 EqExp: Exp = {
   <lhs: EqExp> "==" <rhs: RelExp> => Exp::Binary { op: BinaryOp::Eq, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <lhs: EqExp> "!=" <rhs: RelExp> => Exp::Binary { op: BinaryOp::Ne, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-  <r: RelExp> => r,
+  <RelExp> => <>,
 };
 
 // RelExp := AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp
@@ -144,7 +156,7 @@ RelExp: Exp = {
   <lhs: RelExp> ">"  <rhs: AddExp> => Exp::Binary { op: BinaryOp::Gt, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <lhs: RelExp> "<=" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Le, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <lhs: RelExp> ">=" <rhs: AddExp> => Exp::Binary { op: BinaryOp::Ge, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-  <rhs: AddExp> => rhs,
+  <AddExp> => <>,
 };
 
 AddExp: Exp = {
@@ -157,22 +169,28 @@ MulExp: Exp = {
   <lhs: MulExp> "*" <rhs: UnaryExp> => Exp::Binary { op: BinaryOp::Mul, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <lhs: MulExp> "/" <rhs: UnaryExp> => Exp::Binary { op: BinaryOp::Div, lhs: Box::new(lhs), rhs: Box::new(rhs) },
   <lhs: MulExp> "%" <rhs: UnaryExp> => Exp::Binary { op: BinaryOp::Mod, lhs: Box::new(lhs), rhs: Box::new(rhs) },
-  <u: UnaryExp> => u,
+  <UnaryExp> => <>,
 }
 
 UnaryExp: Exp = {
-  <p: PrimaryExp> => p,
+  // 函数调用优先于 PrimaryExp（避免把 IDENT 当 LVal 解析）
+  <PrimaryExp> => <>,
+  <FuncCall> => Exp::Call(<>),
   <op: UnaryOp> <rhs: UnaryExp> => Exp::Unary { op, exp: Box::new(rhs) },
 }
 
+FuncCall: Call = {
+  <func: Ident> "(" <args: Comma<Exp>> ")" => Call { <> }
+}
+
 PrimaryExp: Exp = {
-  "(" <exp: Exp> ")" => exp,
-  <num: Number> => Exp::Number(num),
-  <lval: LVal> => Exp::LVal(lval),
+  "(" <Exp> ")" => <>,
+  <Number> => Exp::Number(<>),
+  <LVal> => Exp::LVal(<>),
 };
 
 LVal: LVal = {
-  <ident: Ident> => LVal::Var(ident),
+  <Ident> => LVal::Var(<>),
 };
 
 UnaryOp: UnaryOp = { 
@@ -181,7 +199,7 @@ UnaryOp: UnaryOp = {
   "!" => UnaryOp::Not,
 }
 
-Number: i32 = <num: IntConst> => num;
+Number: i32 = <IntConst> => <>;
 
 // 如果匹配到标识符, 就返回这个字符串
 // 一对尖括号在此处指代的是正则表达式匹配到的字符串 (&str)

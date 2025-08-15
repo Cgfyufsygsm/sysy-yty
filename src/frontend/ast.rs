@@ -1,19 +1,32 @@
 #[derive(Debug)]
 pub struct CompUnit {
-  pub func_def: FuncDef,
+  pub comp_items: Vec<CompItem>,
+}
+
+#[derive(Debug)]
+pub enum CompItem {
+  FuncDef(FuncDef),
+  Decl(Decl),
 }
 
 #[derive(Debug)]
 pub struct FuncDef {
-  pub func_type: FuncType,
+  pub btype: BType,
   pub ident: String,
-  // pub params: Vec<Param>,
+  pub params: Vec<FuncParam>,
   pub block: Block,
 }
 
-#[derive(Debug)]
-pub enum FuncType {
+#[derive(Debug, Clone)]
+pub enum BType {
   Int,
+  Void,
+}
+
+#[derive(Debug)]
+pub struct FuncParam {
+  pub btype: BType,
+  pub ident: String,
 }
 
 #[derive(Debug)]
@@ -46,11 +59,6 @@ pub struct VarDecl {
 }
 
 #[derive(Debug)]
-pub enum BType {
-  Int,
-}
-
-#[derive(Debug)]
 pub struct ConstDef {
   pub ident: String,
   pub init: ConstInitVal,
@@ -74,7 +82,7 @@ pub enum InitVal {
 
 #[derive(Debug)]
 pub enum Stmt {
-  Return(Exp),
+  Return(Option<Exp>),
   Assign { lval: LVal, exp: Exp },
   Exp(Option<Exp>),
   Block(Block),
@@ -125,7 +133,14 @@ pub enum Exp {
     lhs: Box<Exp>,
     rhs: Box<Exp>
   },
-  LVal(LVal)
+  LVal(LVal),
+  Call(Call)
+}
+
+#[derive(Debug, Clone)]
+pub struct Call {
+  pub func: String,
+  pub args: Vec<Exp>,
 }
 
 #[derive(Debug, Clone)]

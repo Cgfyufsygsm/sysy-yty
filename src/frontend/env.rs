@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::frontend::symbol::SymbolTable;
-use koopa::ir::{builder::{BasicBlockBuilder, LocalBuilder}, BasicBlock, Function, FunctionData, Program, Value};
+use koopa::ir::{builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder, LocalInstBuilder}, BasicBlock, Function, FunctionData, Program, Type, Value};
 
 #[derive(Default)]
 pub struct Environment {
@@ -38,6 +38,10 @@ impl Context {
     self.block = None;
   }
 
+  pub fn clear_func(&mut self) {
+    self.func = None;
+  }
+
   pub fn current_open_block(&mut self) -> Option<BasicBlock> {
     if let Some(bb) = self.block {
       if !self.is_block_terminated(bb) {
@@ -51,8 +55,29 @@ impl Context {
     self.program.func_mut(self.func.expect("No function set"))
   }
 
+  pub fn is_global(&self) -> bool {
+    self.func.is_none()
+  }
+
   pub fn local_builder(&mut self) -> LocalBuilder {
     self.func_data().dfg_mut().new_value()
+  }
+
+  pub fn global_builder(&mut self) -> GlobalBuilder {
+    self.program.new_value()
+  }
+
+  pub fn alloc_and_store(&mut self, value: Value, ty: Type) -> Value {
+    let alloc = self.local_builder().alloc(ty);
+    let store = self.local_builder().store(value, alloc);
+    self.add_inst(alloc);
+    self.add_inst(store);
+    alloc
+  }
+
+  pub fn set_value_name(&mut self, value: Value, name: String) {
+    // TODO, now only local variables can have names
+    self.func_data().dfg_mut().set_value_name(value, Some(name));
   }
 
   pub fn create_block(&mut self, name: Option<String>) {

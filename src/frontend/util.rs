@@ -25,7 +25,7 @@ impl Fold for Exp {
       Exp::Number(n) => Exp::Number(*n),
 
       Exp::LVal(lval) => match lval {
-        LVal::Var(ident) => match env.table.get(&ident) {
+        LVal::Var(ident) => match env.table.get_var(&ident) {
           Some(Variable::Const(value)) => Exp::Number(*value),
           Some(Variable::Var(_var)) => Exp::LVal(LVal::Var(ident.to_string())),
           None => panic!("Variable {} not found in symbol table", ident),
@@ -96,6 +96,7 @@ impl Fold for Exp {
           Exp::ShortCircuit { op: op.clone(), lhs: Box::new(l), rhs: Box::new(r) }
         }
       }
+      _ => self.clone(),
     }
   }
 }

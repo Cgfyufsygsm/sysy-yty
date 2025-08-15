@@ -1,7 +1,9 @@
+use core::panic;
+
 use crate::frontend::{env::Environment, symbol::Variable, util::{Fold, fresh_bb_name, fresh_tmp_name}};
 
 use super::ast::*;
-use koopa::ir::{builder::{LocalInstBuilder, ValueBuilder}, FunctionData, Type, Value, BinaryOp::*};
+use koopa::ir::{builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp::*, FunctionData, Type, Value};
 
 pub trait GenerateIR {
   type Output;
@@ -12,7 +14,23 @@ impl GenerateIR for CompUnit {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
-    self.func_def.generate_on(env);
+    // setup builtin
+    super::sysy_lib::setup_sysy_lib(env);
+
+    for item in &self.comp_items {
+      item.generate_on(env);
+    }
+  }
+}
+
+impl GenerateIR for CompItem {
+  type Output = ();
+
+  fn generate_on(&self, env: &mut Environment) {
+    match self {
+      CompItem::FuncDef(func_def) => func_def.generate_on(env),
+      CompItem::Decl(decl) => decl.generate_on(env),
+    }
   }
 }
 
@@ -20,21 +38,51 @@ impl GenerateIR for FuncDef {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
-    // Create a new function.
-    let func_data = FunctionData::new(
+    env.table.enter_scope();
+
+    let mut params = vec![];
+    for param in &self.params {
+      let ident = format!("@{}", param.ident);
+      params.push((Some(ident), param.btype.clone().into())); // Assuming all params are i32 for simplicity
+    }
+    let func_data = FunctionData::with_param_names(
       format!("@{}", self.ident),
-      vec![],
-      match self.func_type {
-        FuncType::Int => Type::get_i32(),
-      },
+      params.clone(), 
+      self.btype.clone().into()
     );
+
     
     let func = env.ctx.program.new_func(func_data);
+    env.table.insert_func(&self.ident, func);
     env.ctx.set_func(func);
-    env.ctx.create_block(Some("@entry".to_string()));
+    env.ctx.create_block(Some("@entry".into()));
+
+    for (i, param) in self.params.iter().enumerate() {
+      let value = env.ctx.func_data().params()[i];
+      let alloc = env.ctx.alloc_and_store(value, param.btype.clone().into());
+      env.ctx.set_value_name(value, format!("%{}", param.ident.clone()));
+      env.table.insert_var(&param.ident, alloc);
+    }
+    
 
     // Generate IR for the block.
     self.block.generate_on(env);
+
+    env.table.leave_scope();
+
+    if env.ctx.current_open_block().is_some() {
+      // if no explicit return in the function, return a default value
+      let default_ret = match self.btype {
+        BType::Void => None,
+        BType::Int => Some(env.ctx.local_builder().integer(0)),
+      };
+      let ret = env.ctx.local_builder().ret(default_ret);
+      env.ctx.add_inst(ret);
+      env.ctx.mark_block_terminated(env.ctx.block.expect("No block set"));
+    }
+
+    env.ctx.clear_func();
+    env.ctx.clear_block();
   }
 }
 
@@ -63,8 +111,9 @@ impl GenerateIR for Decl {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
-    if env.ctx.current_open_block().is_none() {
-      // If no block is open, we cannot generate any instructions.
+    if env.ctx.current_open_block().is_none() && !env.ctx.is_global() {
+      // If no block is open, we should not generate any instructions.
+      // But we still need to generate the declaration of global variables.
       return;
     }
     match self {
@@ -101,10 +150,18 @@ impl GenerateIR for ConstDef {
     let value = match &self.init {
       ConstInitVal::Exp(exp) => exp.fold(env),
     };
-    env.table.insert_const(&self.ident, match value {
+    if env.ctx.func.is_some() {
+      env.table.insert_const(&self.ident, match value {
       Exp::Number(n) => n,
       _ => panic!("Expected constant expression, found {:?}", value),
-    });
+      });
+    } else {
+      // global constant
+      env.table.insert_global_const(&self.ident, match value {
+        Exp::Number(n) => n,
+        _ => panic!("Expected constant expression, found {:?}", value),
+      });
+    }
   }
 }
 
@@ -112,17 +169,30 @@ impl GenerateIR for VarDef {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
-    let ptr = env.ctx.local_builder().alloc(Type::get_i32());
-    env.ctx.add_inst(ptr);
-
-    env.table.insert_var(&self.ident, ptr);
-
-    if let Some(init) = &self.init {
-      let val = match init {
-        InitVal::Exp(exp) => exp.fold(env).generate_on(env)
+    if env.ctx.is_global() {
+      let init = if let Some(init) = &self.init {
+        match init {
+          InitVal::Exp(exp) => exp.fold(env).generate_on(env),
+        }
+      } else {
+        env.ctx.global_builder().zero_init(Type::get_i32())
+        // TODO: 这里的 type 应该是根据变量类型来决定的，数组的情况应该要改，看看怎么改
       };
-      let store_inst = env.ctx.local_builder().store(val, ptr);
-      env.ctx.add_inst(store_inst);
+      let alloc = env.ctx.global_builder().global_alloc(init);
+      env.table.insert_global_var(&self.ident, alloc);
+    } else {
+      let ptr = env.ctx.local_builder().alloc(Type::get_i32());
+      env.ctx.add_inst(ptr);
+
+      env.table.insert_var(&self.ident, ptr);
+
+      if let Some(init) = &self.init {
+        let val = match init {
+          InitVal::Exp(exp) => exp.fold(env).generate_on(env)
+        };
+        let store_inst = env.ctx.local_builder().store(val, ptr);
+        env.ctx.add_inst(store_inst);
+      }
     }
   }
 }
@@ -137,9 +207,13 @@ impl GenerateIR for Stmt {
     }
     match self {
       Stmt::Return(exp) => {
-        let exp = exp.fold(env);
-        let ret_val = exp.generate_on(env);
-        let ret_inst = env.ctx.local_builder().ret(Some(ret_val));
+        let ret_inst = if let Some(exp) = exp {
+          let ret_val = exp.fold(env).generate_on(env);
+          env.ctx.local_builder().ret(Some(ret_val))
+        } else {
+          // If no expression, return void.
+          env.ctx.local_builder().ret(None)
+        };
         env.ctx.add_inst(ret_inst);
         env.ctx.mark_block_terminated(env.ctx.block.expect("No block set"));
       }
@@ -169,7 +243,6 @@ impl GenerateIR for Stmt {
       Stmt::Continue(continue_stmt) => {
         continue_stmt.generate_on(env);
       }
-      _ => {}
     }
   }
 }
@@ -344,7 +417,7 @@ impl GenerateIR for LVal {
   fn generate_on(&self, env: &mut Environment) -> Value {
     match self {
       LVal::Var(ident) => {
-        match env.table.get(ident) {
+        match env.table.get_var(ident) {
           Some(Variable::Var(ptr)) => *ptr,
           Some(Variable::Const(value)) => env.ctx.local_builder().integer(*value),
           None => panic!("Variable {} not found in symbol table", ident),
@@ -361,8 +434,11 @@ impl GenerateIR for Exp {
 
     match self {
       Exp::Number(n) => {
-          env.ctx.local_builder().integer(*n)
+        if env.ctx.is_global() {
+          return env.ctx.global_builder().integer(*n);
         }
+        env.ctx.local_builder().integer(*n)
+      }
       Exp::Unary { op, exp} => {
         let val = exp.generate_on(env);
 
@@ -405,9 +481,6 @@ impl GenerateIR for Exp {
       }
 
       Exp::ShortCircuit { op, lhs, rhs } => {
-      // 要求当前已经有一个 open block
-        let orig_bb = env.ctx.block.expect("No current basic block when generating short-circuit");
-
         // eval lhs
         let lhs_val = lhs.generate_on(env);
         let zero = env.ctx.local_builder().integer(0);
@@ -417,6 +490,8 @@ impl GenerateIR for Exp {
         // allocate a temp to hold the final boolean result (i32)
         let res_ptr = env.ctx.local_builder().alloc(Type::get_i32());
         env.ctx.add_inst(res_ptr);
+
+        let orig_bb = env.ctx.block.expect("No current basic block when generating short-circuit");
 
         match op {
           ShortCircuitOp::And => {
@@ -503,11 +578,10 @@ impl GenerateIR for Exp {
         }
       }
 
-
       Exp::LVal(lval) => {
         match lval {
           LVal::Var(ident) => {
-            match env.table.get(ident) {
+            match env.table.get_var(ident) {
               Some(Variable::Const(value)) => {
                 env.ctx.local_builder().integer(*value)
               }
@@ -521,6 +595,27 @@ impl GenerateIR for Exp {
           }
         }
       }
+
+      Exp::Call(call) => call.generate_on(env),
     }
+  }
+}
+
+impl GenerateIR for Call {
+  type Output = Value;
+
+  fn generate_on(&self, env: &mut Environment) -> Value {
+    let mut args = vec![];
+
+    for arg in &self.args {
+      let arg_val = arg.fold(env).generate_on(env);
+      args.push(arg_val);
+    }
+    let func = env.table.get_func(&self.func).expect("Function not found in symbol table");
+
+    let call_inst = env.ctx.local_builder().call(*func, args);
+    env.ctx.add_inst(call_inst);
+
+    call_inst
   }
 }

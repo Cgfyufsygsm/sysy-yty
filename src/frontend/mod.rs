@@ -3,6 +3,8 @@ pub mod ast;
 pub mod symbol;
 pub mod env;
 pub mod util;
+pub mod transform;
+pub mod sysy_lib;
 
 use koopa::ir::Program;
 use crate::frontend::ast::CompUnit; // Add this line to import CompUnit
