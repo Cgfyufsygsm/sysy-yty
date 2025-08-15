@@ -13,6 +13,9 @@ match {
 
   r"if" => "if",
   r"else" => "else",
+  r"while" => "while",
+  r"continue" => "continue",
+  r"break" => "break",
   r"int" => "int",
 
   // 剩下的情况采用默认方式处理
@@ -85,13 +88,22 @@ MatchedStmt: Stmt = {
   <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { lval, exp },
   <exp: Exp?> ";" => Stmt::Exp(exp),
   <block: Block> => Stmt::Block(block),
+  "break" ";" => Stmt::Break(Break),
+  "continue" ";" => Stmt::Continue(Continue),
 
   "if" "(" <cond: Exp> ")" <then_: MatchedStmt> "else" <else_: MatchedStmt> => {
     Stmt::If(If { cond, then_block: Box::new(then_), else_block: Some(Box::new(else_)) })
   },
-};
+
+  "while" "(" <cond: Exp> ")" <body: MatchedStmt> => {
+    Stmt::While(While { cond, body: Box::new(body) })
+  },
+}
 
 UnmatchedStmt: Stmt = {
+  "while" "(" <cond: Exp> ")" <body: UnmatchedStmt> => {
+    Stmt::While(While { cond, body: Box::new(body) })
+  },
   // if without else
   "if" "(" <cond: Exp> ")" <then_: Stmt> => {
     Stmt::If( If { cond, then_block: Box::new(then_), else_block: None })

@@ -78,14 +78,29 @@ pub enum Stmt {
   Assign { lval: LVal, exp: Exp },
   Exp(Option<Exp>),
   Block(Block),
-  If(If)
+  If(If),
+  While(While),
+  Break(Break),
+  Continue(Continue),
 }
+
+#[derive(Debug, Clone)]
+pub struct Break;
+
+#[derive(Debug, Clone)]
+pub struct Continue;
 
 #[derive(Debug)]
 pub struct If {
   pub cond: Exp,
   pub then_block: Box<Stmt>,
   pub else_block: Option<Box<Stmt>>,
+}
+
+#[derive(Debug)]
+pub struct While {
+  pub cond: Exp,
+  pub body: Box<Stmt>,
 }
 
 #[derive(Debug, Clone)]

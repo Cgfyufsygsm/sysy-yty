@@ -9,11 +9,18 @@ pub struct Environment {
   pub ctx: Context,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoopInfo {
+  pub continue_bb: BasicBlock,
+  pub break_bb: BasicBlock,
+}
+
 #[derive(Default)]
 pub struct Context {
   pub program: Program,
   pub func: Option<Function>,
   pub block: Option<BasicBlock>,
+  pub loop_stack: Vec<LoopInfo>,
 
   pub terminated_bbs: HashSet<BasicBlock>,
 }
@@ -65,5 +72,17 @@ impl Context {
 
   pub fn is_block_terminated(&self, bb: BasicBlock) -> bool {
     self.terminated_bbs.contains(&bb)
+  }
+
+  pub fn push_loop(&mut self, continue_bb: BasicBlock, break_bb: BasicBlock) {
+    self.loop_stack.push(LoopInfo { continue_bb, break_bb });
+  }
+
+  pub fn pop_loop(&mut self) -> Option<LoopInfo> {
+    self.loop_stack.pop()
+  }
+
+  pub fn current_loop(&self) -> Option<&LoopInfo> {
+    self.loop_stack.last()
   }
 }

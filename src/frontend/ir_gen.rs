@@ -63,6 +63,10 @@ impl GenerateIR for Decl {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
+    if env.ctx.current_open_block().is_none() {
+      // If no block is open, we cannot generate any instructions.
+      return;
+    }
     match self {
       Decl::Const(const_decl) => const_decl.generate_on(env),
       Decl::Var(var_decl) => var_decl.generate_on(env),
@@ -156,6 +160,16 @@ impl GenerateIR for Stmt {
       Stmt::If(if_stmt) => {
         if_stmt.generate_on(env);
       }
+      Stmt::While(while_stmt) => {
+        while_stmt.generate_on(env);
+      }
+      Stmt::Break(break_stmt) => {
+        break_stmt.generate_on(env);
+      }
+      Stmt::Continue(continue_stmt) => {
+        continue_stmt.generate_on(env);
+      }
+      _ => {}
     }
   }
 }
@@ -242,6 +256,84 @@ impl GenerateIR for If {
 
         env.ctx.set_block(merge_bb);
       }
+    }
+  }
+}
+
+impl GenerateIR for While {
+  type Output = ();
+
+  fn generate_on(&self, env: &mut Environment) {
+    let orig_bb = env.ctx.block.expect("No current basic block when generating while");
+
+    env.ctx.create_block(Some(fresh_bb_name("while_entry")));
+    let while_entry_bb = env.ctx.block.expect("Failed to create 'while_entry' block");
+    env.ctx.create_block(Some(fresh_bb_name("while_body")));
+    let while_body_bb = env.ctx.block.expect("Failed to create 'while_body' block");
+    env.ctx.create_block(Some(fresh_bb_name("while_end")));
+    let while_end_bb = env.ctx.block.expect("Failed to create 'while_end' block");
+
+    env.ctx.set_block(orig_bb);
+    let jump_entry_inst = env.ctx.local_builder().jump(while_entry_bb);
+    env.ctx.add_inst(jump_entry_inst);
+    env.ctx.mark_block_terminated(orig_bb);
+
+    env.ctx.set_block(while_entry_bb);
+    let cond = self.cond.fold(env).generate_on(env);
+    let cur_bb = env.ctx.block.expect("No current basic block after condition evaluation");
+    env.ctx.set_block(cur_bb);
+    let branch_inst = env.ctx.local_builder().branch(cond, while_body_bb, while_end_bb);
+    env.ctx.add_inst(branch_inst);
+    env.ctx.mark_block_terminated(cur_bb);
+
+    // push loop into stack
+    env.ctx.push_loop(while_entry_bb, while_end_bb);
+
+    env.ctx.set_block(while_body_bb);
+    self.body.generate_on(env);
+    let body_open = env.ctx.current_open_block();
+
+    env.ctx.pop_loop();
+
+    if body_open.is_some() {
+      let body_jmp_inst = env.ctx.local_builder().jump(while_entry_bb);
+      env.ctx.add_inst(body_jmp_inst);
+      env.ctx.mark_block_terminated(while_body_bb);
+    }
+    // Set the end block as the current block
+    env.ctx.set_block(while_end_bb);
+
+  }
+}
+
+impl GenerateIR for Break {
+  type Output = ();
+
+  fn generate_on(&self, env: &mut Environment) {
+    if let Some(loop_info) = env.ctx.current_loop() {
+      let break_bb = loop_info.break_bb;
+      let break_inst = env.ctx.local_builder().jump(break_bb);
+      env.ctx.add_inst(break_inst);
+      env.ctx.mark_block_terminated(env.ctx.block.expect("No block set"));
+      env.ctx.clear_block();
+    } else {
+      panic!("Break statement outside of loop");
+    }
+  }
+}
+
+impl GenerateIR for Continue {
+  type Output = ();
+
+  fn generate_on(&self, env: &mut Environment) {
+    if let Some(loop_info) = env.ctx.current_loop() {
+      let continue_bb = loop_info.continue_bb;
+      let continue_inst = env.ctx.local_builder().jump(continue_bb);
+      env.ctx.add_inst(continue_inst);
+      env.ctx.mark_block_terminated(env.ctx.block.expect("No block set"));
+      env.ctx.clear_block();
+    } else {
+      panic!("Continue statement outside of loop");
     }
   }
 }
