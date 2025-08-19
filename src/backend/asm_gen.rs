@@ -1,15 +1,22 @@
-use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Integer, Jump, Load, Return, Store, Call}, FunctionData, Program, ValueKind};
+use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Call, Integer, Jump, Load, Return, Store}, FunctionData, Program, TypeKind, ValueKind};
 use crate::backend::{env::Environment, frame::{layout_frame}, util::{sp_off, load_operand_to_reg}};
 
-pub(crate) trait GenerateAsm {
+pub trait GenerateProgAsm {
   fn generate_asm(&self) -> String;
+}
+
+trait GenerateAsm {
+  fn generate_asm(
+    &self,
+    env: &mut Environment,
+  ) -> String;
 }
 
 static SYSY_LIB_FUNCTIONS: [&str; 8] = [
   "getint", "getch", "getarray", "putint", "putch", "putarray", "starttime", "stoptime",
 ];
 
-impl GenerateAsm for Program {
+impl GenerateProgAsm for Program {
   fn generate_asm(&self) -> String {
     let mut asm = String::from("  .text\n");
 
@@ -21,20 +28,24 @@ impl GenerateAsm for Program {
           continue; // Skip sysy library functions
         }
       }
-      asm.push_str(&func_data.generate_asm());
+      let mut env = Environment::new(self);
+      env.set_func(func);
+      asm.push_str(&func_data.generate_asm(&mut env));
+      env.clear_func();
     }
     asm
   }
 }
 
 impl GenerateAsm for FunctionData {
-  fn generate_asm(&self) -> String {
-    let layout = layout_frame(self);
+  fn generate_asm(&self, env: &mut Environment) -> String {
+    env.set_frame_layout(layout_frame(self));
+
     let mut asm = String::new();
     let func_name = self.name().trim_start_matches('@');
     asm.push_str(&format!("  .globl {}\n{}:\n", func_name, func_name));
 
-    asm.push_str(&layout.generate_prologue());
+    asm.push_str(&env.frame_layout().generate_prologue());
 
     for (bb, node) in self.layout().bbs() {
       let bb_name = self.dfg().bb(*bb).name();
@@ -44,28 +55,25 @@ impl GenerateAsm for FunctionData {
       }
       for &inst in node.insts().keys() {
         let value_data = self.dfg().value(inst);
-        let env = Environment::new(self, &layout, inst);
-        asm.push_str(&value_data.generate_asm(&env));
+        env.set_inst(inst);
+        asm.push_str(&value_data.generate_asm(env));
+        env.clear_inst();
       }
     }
 
-    asm.push_str(&layout.generate_epilogue(func_name));
+    asm.push_str(&env.frame_layout().generate_epilogue(func_name));
+    env.clear_frame_layout();
 
     asm
   }
 }
 
-trait GenerateStackAsm {
-  fn generate_asm(
-    &self,
-    env: &Environment,
-  ) -> String;
-}
 
-impl GenerateStackAsm for ValueData {
+
+impl GenerateAsm for ValueData {
   fn generate_asm(
     &self,
-    env: &Environment,
+    env: &mut Environment,
   ) -> String {
     let mut asm = String::new();
 
@@ -81,6 +89,7 @@ impl GenerateStackAsm for ValueData {
       ValueKind::Jump(jump) => jump.generate_asm(env),
       
       ValueKind::Alloc(_) => String::new(),
+      ValueKind::Call(call) => call.generate_asm(env),
 
       default => {
         // Handle other value kinds if necessary
@@ -91,10 +100,10 @@ impl GenerateStackAsm for ValueData {
   }
 }
 
-impl GenerateStackAsm for Integer {
+impl GenerateAsm for Integer {
   fn generate_asm(
       &self,
-      env: &Environment,
+      env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
     asm.push_str(&format!("  li    t0, {}\n", self.value()));
@@ -103,10 +112,10 @@ impl GenerateStackAsm for Integer {
   }
 }
 
-impl GenerateStackAsm for Load {
+impl GenerateAsm for Load {
   fn generate_asm(
       &self,
-      env: &Environment,
+      env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
     let ptr = self.src();
@@ -117,15 +126,16 @@ impl GenerateStackAsm for Load {
   }
 }
 
-impl GenerateStackAsm for Store {
+impl GenerateAsm for Store {
   fn generate_asm(
       &self,
-      env: &Environment,
+      env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
     let value = self.value();
+
     let ptr = self.dest();
-    let (val_asm, val_reg) = load_operand_to_reg(env, value, "t0");
+    let (val_asm, val_reg) = load_operand_to_reg(env, value, "t0".into());
     let ptr_off = env.get_offset(&ptr);
     asm.push_str(&val_asm);
     asm.push_str(&format!("  sw    {}, {}\n", val_reg, sp_off(ptr_off)));
@@ -133,10 +143,10 @@ impl GenerateStackAsm for Store {
   }
 }
 
-impl GenerateStackAsm for Return {
+impl GenerateAsm for Return {
   fn generate_asm(
     &self,
-    env: &Environment,
+    env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
     if let Some(v) = self.value() {
@@ -151,24 +161,24 @@ impl GenerateStackAsm for Return {
         }
       }
     }
-    asm.push_str(&format!("  j     {}_ret\n", env.func_name()));
+    asm.push_str(&format!("  j     {}_ret\n", env.cur_func_name()));
     asm
   }
 }
 
-impl GenerateStackAsm for Binary {
+impl GenerateAsm for Binary {
   /// 根据 Binary 实例生成 RISC-V 汇编
   fn generate_asm(
     &self,
-    env: &Environment,
+    env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
 
     let lhs = self.lhs();
     let rhs = self.rhs();
 
-    let (lhs_asm, lhs_reg) = load_operand_to_reg(env, lhs, "t0");
-    let (rhs_asm, rhs_reg) = load_operand_to_reg(env, rhs, "t1");
+    let (lhs_asm, lhs_reg) = load_operand_to_reg(env, lhs, "t0".into());
+    let (rhs_asm, rhs_reg) = load_operand_to_reg(env, rhs, "t1".into());
     let dest_off = env.get_self_offset();
 
     asm.push_str(&lhs_asm);
@@ -198,14 +208,14 @@ impl GenerateStackAsm for Binary {
   }
 }
 
-impl GenerateStackAsm for Branch {
+impl GenerateAsm for Branch {
   fn generate_asm(
       &self,
-      env: &Environment,
+      env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
     let cond = self.cond();
-    let (cond_asm, cond_reg) = load_operand_to_reg(env, cond, "t0");
+    let (cond_asm, cond_reg) = load_operand_to_reg(env, cond, "t0".into());
     asm.push_str(&cond_asm);
     let then_bb = env.get_bb_name(self.true_bb());
     let else_bb = env.get_bb_name(self.false_bb());
@@ -215,10 +225,10 @@ impl GenerateStackAsm for Branch {
   }
 }
 
-impl GenerateStackAsm for Jump {
+impl GenerateAsm for Jump {
   fn generate_asm(
       &self,
-      env: &Environment,
+      env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
     let target = self.target();
@@ -228,21 +238,37 @@ impl GenerateStackAsm for Jump {
   }
 }
 
-impl GenerateStackAsm for Call {
+impl GenerateAsm for Call {
   fn generate_asm(
       &self,
-      env: &Environment,
+      env: &mut Environment,
     ) -> String {
     let mut asm = String::new();
-    let func = self.callee();
+    let callee = env.get_func_data(self.callee());
     let args = self.args();
     
-    /*
-     * TODO: 处理函数调用的参数传递
-     * prologue 和 epilogue 保存 ra 寄存器
-     * 前 8 个参数塞进 a0-a7
-     * 剩下的，以及 ra 在栈帧上如何分配，看那张图
-     */
+    for (i, &arg) in args.iter().enumerate() {
+      if i < 8 {
+        let (arg_asm, _arg_reg) = load_operand_to_reg(env, arg, format!("a{}", i));
+        asm.push_str(&arg_asm);
+      } else {
+        let (arg_asm, arg_reg) = load_operand_to_reg(env, arg, "t0".into());
+        asm.push_str(&arg_asm);
+        let off = ((i as i32) - 8) * 4;
+        asm.push_str(&format!("  sw    {}, {}\n", arg_reg, sp_off(off)));
+      }
+    }
+
+    let callee_name = callee.name().trim_start_matches("@");
+    asm.push_str(&format!("  call  {}\n", callee_name));
+
+    if let TypeKind::Function(_param_ty, ret_ty) = callee.ty().kind() {
+      if !ret_ty.is_unit() {
+        asm.push_str(&format!("  sw    a0, {}\n", sp_off(env.get_self_offset())));
+      }
+    } else {
+      panic!("Call target is not a function type");
+    }
 
     asm
   }

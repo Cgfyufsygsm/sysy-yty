@@ -11,8 +11,14 @@ pub fn sp_off(offset: i32) -> String {
 pub fn load_operand_to_reg(
   env: &Environment,
   val: Value,
-  scratch: &'static str,        // 供立即数或栈值使用的临时寄存器
-) -> (String, &'static str) {
+  scratch: String,        // 供立即数或栈值使用的临时寄存器
+) -> (String, String) {
+
+  // 处理如果是函数参数
+  if let Some(reg) = env.frame_layout().get_param_reg(&val) {
+    return (String::new(), reg.clone());
+  }
+
   let data = env.func_data().dfg().value(val);
   match data.kind() {
     ValueKind::Integer(i) => {

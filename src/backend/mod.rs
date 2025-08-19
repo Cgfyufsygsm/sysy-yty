@@ -3,7 +3,7 @@ pub mod frame;
 pub mod env;
 pub mod util;
 
-use crate::backend::asm_gen::GenerateAsm;
+use crate::backend::asm_gen::GenerateProgAsm;
 
 pub struct Backend;
 

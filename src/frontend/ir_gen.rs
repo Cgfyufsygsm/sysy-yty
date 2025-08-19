@@ -55,7 +55,7 @@ impl GenerateIR for FuncDef {
     let func = env.ctx.program.new_func(func_data);
     env.table.insert_func(&self.ident, func);
     env.ctx.set_func(func);
-    env.ctx.create_block(Some("@entry".into()));
+    env.ctx.create_block(Some(format!("@{}_entry", self.ident)));
 
     for (i, param) in self.params.iter().enumerate() {
       let value = env.ctx.func_data().params()[i];
