@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use koopa::ir::{BasicBlock, Function, FunctionData, Program, Value};
 use crate::backend::frame::FrameLayout;
 
@@ -6,15 +8,17 @@ pub struct Environment<'a> {
   func: Option<Function>,
   frame_layout: Option<FrameLayout>,
   inst: Option<Value>,
+  global_table: &'a HashMap<Value, String>,
 }
 
 impl<'a> Environment<'a> {
-  pub fn new(program: &'a Program) -> Self {
+  pub fn new(program: &'a Program, global_table: &'a HashMap<Value, String>) -> Self {
     Self {
       program,
       func: None,
       frame_layout: None,
       inst: None,
+      global_table,
     }
   }
 
@@ -75,5 +79,14 @@ impl<'a> Environment<'a> {
     .name().as_ref()
     .expect("Basic block without name")
     .trim_start_matches(&['@', '%'][..])
+  }
+
+  pub fn get_global_name(&self, value: Value) -> Option<&String> {
+    self.global_table.get(&value)
+  }
+
+  pub fn load_global_addr(&self, value: Value, reg: &str) -> String {
+    let global_name = self.get_global_name(value).expect("Global variable not found");
+    format!("  la    {}, {}\n", reg, global_name)
   }
 }

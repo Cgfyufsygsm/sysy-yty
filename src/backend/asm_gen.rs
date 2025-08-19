@@ -1,3 +1,5 @@
+use std::{collections::HashMap, ops::Deref};
+
 use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Call, Integer, Jump, Load, Return, Store}, FunctionData, Program, TypeKind, ValueKind};
 use crate::backend::{env::Environment, frame::{layout_frame}, util::{sp_off, load_operand_to_reg}};
 
@@ -18,7 +20,32 @@ static SYSY_LIB_FUNCTIONS: [&str; 8] = [
 
 impl GenerateProgAsm for Program {
   fn generate_asm(&self) -> String {
-    let mut asm = String::from("  .text\n");
+    let mut asm = String::from("  .data\n");
+
+    let mut global_table = HashMap::new();
+    for &value in self.inst_layout() {
+      let var_data = self.borrow_value(value);
+      let var_name = var_data.name().as_ref().unwrap().trim_start_matches('@');
+
+      global_table.insert(value, var_name.to_string());
+      asm.push_str(&format!("  .globl {}\n{}:\n", var_name, var_name));
+
+      if let ValueKind::GlobalAlloc(global_alloc) = var_data.kind() {
+        match self.borrow_value(global_alloc.init()).deref().kind() {
+          ValueKind::Integer(int_val) => {
+            asm.push_str(&format!("  .word {}\n", int_val.value()));
+          }
+          ValueKind::ZeroInit(_) => {
+            asm.push_str("  .zero 4\n");
+          }
+          _ => unreachable!("Expected Integer or ZeroInit for global variable, found {:?}", var_data.kind()),
+        }
+      } else {
+        unreachable!("Expected GlobalAlloc for global variable, found {:?}", var_data.kind());
+      }
+    }
+
+    asm.push_str("\n\n  .text\n");
 
     for &func in self.func_layout() {
       let func_data = self.func(func);
@@ -27,8 +54,10 @@ impl GenerateProgAsm for Program {
         if SYSY_LIB_FUNCTIONS.contains(&func_name) {
           continue; // Skip sysy library functions
         }
+      } else {
+        unreachable!("Function name should start with '@', found: {}", func_data.name());
       }
-      let mut env = Environment::new(self);
+      let mut env = Environment::new(self, &global_table);
       env.set_func(func);
       asm.push_str(&func_data.generate_asm(&mut env));
       env.clear_func();
@@ -119,9 +148,9 @@ impl GenerateAsm for Load {
     ) -> String {
     let mut asm = String::new();
     let ptr = self.src();
-    let ptr_off = env.get_offset(&ptr);
-    asm.push_str(&format!("  lw    t0, {}\n", sp_off(ptr_off)));
-    asm.push_str(&format!("  sw    t0, {}\n", sp_off(env.get_self_offset())));
+    let (ptr_asm, ptr_reg) = load_operand_to_reg(env, ptr, "t0".into());
+    asm.push_str(&ptr_asm);
+    asm.push_str(&format!("  sw    {}, {}\n", ptr_reg, sp_off(env.get_self_offset())));
     asm
   }
 }
@@ -136,9 +165,14 @@ impl GenerateAsm for Store {
 
     let ptr = self.dest();
     let (val_asm, val_reg) = load_operand_to_reg(env, value, "t0".into());
-    let ptr_off = env.get_offset(&ptr);
     asm.push_str(&val_asm);
-    asm.push_str(&format!("  sw    {}, {}\n", val_reg, sp_off(ptr_off)));
+    if ptr.is_global() {
+      // 暂时把地址存在 t1
+      asm.push_str(&env.load_global_addr(ptr, "t1"));
+      asm.push_str(&format!("  sw    {}, 0(t1)\n", val_reg));
+    } else {
+      asm.push_str(&format!("  sw    {}, {}\n", val_reg, sp_off(env.get_offset(&ptr))));
+    }
     asm
   }
 }

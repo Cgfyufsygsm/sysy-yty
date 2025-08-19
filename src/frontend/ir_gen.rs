@@ -60,7 +60,7 @@ impl GenerateIR for FuncDef {
     for (i, param) in self.params.iter().enumerate() {
       let value = env.ctx.func_data().params()[i];
       let alloc = env.ctx.alloc_and_store(value, param.btype.clone().into());
-      env.ctx.set_value_name(value, format!("%{}", param.ident.clone()));
+      env.ctx.set_value_name(value, param.ident.clone());
       env.table.insert_var(&param.ident, alloc);
     }
     
@@ -179,6 +179,7 @@ impl GenerateIR for VarDef {
         // TODO: 这里的 type 应该是根据变量类型来决定的，数组的情况应该要改，看看怎么改
       };
       let alloc = env.ctx.global_builder().global_alloc(init);
+      env.ctx.set_global_name(alloc, self.ident.clone());
       env.table.insert_global_var(&self.ident, alloc);
     } else {
       let ptr = env.ctx.local_builder().alloc(Type::get_i32());

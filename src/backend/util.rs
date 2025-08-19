@@ -19,6 +19,12 @@ pub fn load_operand_to_reg(
     return (String::new(), reg.clone());
   }
 
+  if val.is_global() {
+    let mut asm = env.load_global_addr(val, &scratch);
+    asm.push_str(&format!("  lw    {}, 0({})\n", scratch, scratch));
+    return (asm, scratch);
+  }
+
   let data = env.func_data().dfg().value(val);
   match data.kind() {
     ValueKind::Integer(i) => {
@@ -27,7 +33,7 @@ pub fn load_operand_to_reg(
       (asm, scratch)
     }
     _ => {
-      // 栈上的值
+      // 栈上的局部变量
       let off = env.get_offset(&val);
       let asm = format!("  lw    {}, {}(sp)\n", scratch, off);
       (asm, scratch)

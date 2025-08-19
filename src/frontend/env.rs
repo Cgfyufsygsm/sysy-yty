@@ -75,9 +75,12 @@ impl Context {
     alloc
   }
 
+  pub fn set_global_name(&mut self, value: Value, name: String) {
+    self.program.set_value_name(value, Some(format!("@{}", name)));
+  }
+
   pub fn set_value_name(&mut self, value: Value, name: String) {
-    // TODO, now only local variables can have names
-    self.func_data().dfg_mut().set_value_name(value, Some(name));
+    self.func_data().dfg_mut().set_value_name(value, Some(format!("%{}", name)));
   }
 
   pub fn create_block(&mut self, name: Option<String>) {
