@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::frontend::symbol::SymbolTable;
-use koopa::ir::{builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder, LocalInstBuilder}, BasicBlock, Function, FunctionData, Program, Type, Value};
+use koopa::ir::{builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder, LocalInstBuilder}, entities::ValueData, BasicBlock, Function, FunctionData, Program, Type, Value};
 
 #[derive(Default)]
 pub struct Environment {
@@ -81,6 +81,10 @@ impl Context {
 
   pub fn set_value_name(&mut self, value: Value, name: String) {
     self.func_data().dfg_mut().set_value_name(value, Some(format!("%{}", name)));
+  }
+
+  pub fn get_valuedata(&mut self, value: Value) -> &ValueData {
+    self.func_data().dfg_mut().value(value)
   }
 
   pub fn create_block(&mut self, name: Option<String>) {

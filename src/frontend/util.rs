@@ -1,4 +1,7 @@
+use core::panic;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+use koopa::ir::{Type};
 
 use crate::frontend::{ast::*, env::Environment, symbol::Variable};
 
@@ -15,6 +18,19 @@ pub fn fresh_tmp_name() -> String {
   format!("%__sc_tmp{}", id)
 }
 
+pub fn get_var_type(size: &Vec<ConstExp>, env: &mut Environment) -> Type {
+  if size.is_empty() {
+    Type::get_i32()
+  } else {
+    let mut ty = Type::get_i32();
+    for exp in size.iter().rev() {
+      let len = exp.eval(env);
+      ty = Type::get_array(ty, len as usize);
+    }
+    ty
+  }
+}
+
 pub(super) trait Eval {
   fn eval(&self, env: &mut Environment) -> i32;
 }
@@ -25,6 +41,16 @@ impl Eval for ConstExp {
     let folded = self.fold(env);
     match folded {
       ConstExp::Exp(Exp::Number(n)) => n,
+      _ => panic!("Cannot evaluate expression: {:?}", folded),
+    }
+  }
+}
+
+impl Eval for Exp {
+  fn eval(&self, env: &mut Environment) -> i32 {
+    let folded = self.fold(env);
+    match folded {
+      Exp::Number(n) => n,
       _ => panic!("Cannot evaluate expression: {:?}", folded),
     }
   }
@@ -50,6 +76,7 @@ impl Fold for Exp {
       Exp::LValExp(lval) => match env.table.get_var(&lval.ident) {
         Some(Variable::Const(value)) => Exp::Number(*value),
         Some(Variable::Var(_var)) => Exp::LValExp(LValExp { ident: lval.ident.to_string(), index: vec![] }),
+        Some(Variable::ConstArray(_) | Variable::Array(_)) => self.clone(),
         None => panic!("Variable {} not found in symbol table", lval.ident),
       },
 
