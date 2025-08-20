@@ -1,5 +1,5 @@
-pub mod ir_gen;
 pub mod ast;
+pub mod ir_gen;
 pub mod symbol;
 pub mod env;
 pub mod util;

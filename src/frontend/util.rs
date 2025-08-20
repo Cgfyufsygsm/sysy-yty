@@ -15,8 +15,31 @@ pub fn fresh_tmp_name() -> String {
   format!("%__sc_tmp{}", id)
 }
 
-pub(crate) trait Fold {
+pub(super) trait Eval {
+  fn eval(&self, env: &mut Environment) -> i32;
+}
+
+/// Evaluate a constant expression
+impl Eval for ConstExp {
+  fn eval(&self, env: &mut Environment) -> i32 {
+    let folded = self.fold(env);
+    match folded {
+      ConstExp::Exp(Exp::Number(n)) => n,
+      _ => panic!("Cannot evaluate expression: {:?}", folded),
+    }
+  }
+}
+
+pub(super) trait Fold {
   fn fold(&self, env: &mut Environment) -> Self;
+}
+
+impl Fold for ConstExp {
+  fn fold(&self, env: &mut Environment) -> ConstExp {
+    match self {
+      ConstExp::Exp(exp) => ConstExp::Exp(exp.fold(env)),
+    }
+  }
 }
 
 impl Fold for Exp {
@@ -24,12 +47,10 @@ impl Fold for Exp {
     match self {
       Exp::Number(n) => Exp::Number(*n),
 
-      Exp::LVal(lval) => match lval {
-        LVal::Var(ident) => match env.table.get_var(&ident) {
-          Some(Variable::Const(value)) => Exp::Number(*value),
-          Some(Variable::Var(_var)) => Exp::LVal(LVal::Var(ident.to_string())),
-          None => panic!("Variable {} not found in symbol table", ident),
-        },
+      Exp::LValExp(lval) => match env.table.get_var(&lval.ident) {
+        Some(Variable::Const(value)) => Exp::Number(*value),
+        Some(Variable::Var(_var)) => Exp::LValExp(LValExp { ident: lval.ident.to_string(), index: vec![] }),
+        None => panic!("Variable {} not found in symbol table", lval.ident),
       },
 
       Exp::Unary { op, exp } => {

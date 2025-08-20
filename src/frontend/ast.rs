@@ -61,35 +61,51 @@ pub struct VarDecl {
 #[derive(Debug)]
 pub struct ConstDef {
   pub ident: String,
+  pub size: Vec<ConstExp>,
   pub init: ConstInitVal,
 }
 
 #[derive(Debug)]
 pub struct VarDef {
-    pub ident: String,
-    pub init: Option<InitVal>,
+  pub ident: String,
+  pub size: Vec<ConstExp>,
+  pub init: Option<InitVal>,
 }
 
 #[derive(Debug)]
 pub enum ConstInitVal {
-  Exp(Exp),
+  ConstExp(ConstExp),
+  ConstInitVals(Box<Vec<ConstInitVal>>),
 }
 
 #[derive(Debug)]
 pub enum InitVal {
   Exp(Exp),
+  InitVals(Box<Vec<InitVal>>),
 }
 
 #[derive(Debug)]
 pub enum Stmt {
   Return(Option<Exp>),
-  Assign { lval: LVal, exp: Exp },
+  Assign(Assign),
   Exp(Option<Exp>),
   Block(Block),
   If(If),
   While(While),
   Break(Break),
   Continue(Continue),
+}
+
+#[derive(Debug, Clone)]
+pub struct Assign {
+  pub lval: LValAssign,
+  pub exp: Exp,
+}
+
+#[derive(Debug, Clone)]
+pub struct LValAssign {
+  pub ident: String,
+  pub index: Vec<Exp>,
 }
 
 #[derive(Debug, Clone)]
@@ -112,8 +128,14 @@ pub struct While {
 }
 
 #[derive(Debug, Clone)]
-pub enum LVal {
-  Var(String),
+pub struct LValExp {
+  pub ident: String,
+  pub index: Vec<Exp>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ConstExp {
+  Exp(Exp),
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +155,7 @@ pub enum Exp {
     lhs: Box<Exp>,
     rhs: Box<Exp>
   },
-  LVal(LVal),
+  LValExp(LValExp),
   Call(Call)
 }
 

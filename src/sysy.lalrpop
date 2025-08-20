@@ -71,23 +71,26 @@ BType: BType = {
 };
 
 ConstDef: ConstDef = {
-  <ident: Ident> "=" <init: ConstInitVal> => ConstDef { <> },
+  <ident: Ident> <size: Index<ConstExp>> "=" <init: ConstInitVal> => ConstDef { <> },
 };
 
 VarDef: VarDef = {
-  <ident: Ident> => VarDef { ident, init: None },
-  <ident: Ident> "=" <init: InitVal> => VarDef { ident, init: Some(init) },
+  <ident: Ident> <size: Index<ConstExp>> <init: ("=" <InitVal>)?> => VarDef { <> },
 };
 
 ConstInitVal: ConstInitVal = {
-  <ConstExp> => ConstInitVal::Exp(<>),
+  <ConstExp> => ConstInitVal::ConstExp(<>),
+  "{" <Comma<ConstInitVal>> "}" => ConstInitVal::ConstInitVals(Box::new(<>)),
 };
 
 InitVal: InitVal = {
   <Exp> => InitVal::Exp(<>),
+  "{" <Comma<InitVal>> "}" => InitVal::InitVals(Box::new(<>)),
 };
 
-ConstExp: Exp = Exp;
+ConstExp: ConstExp = {
+  <Exp> => ConstExp::Exp(<>),
+};
 
 Stmt: Stmt = {
   <MatchedStmt> => <>,
@@ -97,7 +100,7 @@ Stmt: Stmt = {
 MatchedStmt: Stmt = {
   // 不含 if/else 的也包含在这里
   "return" <Exp?> ";" => Stmt::Return(<>),
-  <lval: LVal> "=" <exp: Exp> ";" => Stmt::Assign { <> },
+  <lval: LValAssign> "=" <exp: Exp> ";" => Stmt::Assign(Assign { <> }),
   <Exp?> ";" => Stmt::Exp(<>),
   <Block> => Stmt::Block(<>),
   "break" ";" => Stmt::Break(Break),
@@ -110,6 +113,10 @@ MatchedStmt: Stmt = {
   "while" "(" <cond: Exp> ")" <body: MatchedStmt> => {
     Stmt::While(While { cond, body: Box::new(body) })
   },
+}
+
+LValAssign: LValAssign = {
+  <ident: Ident> <index: Index<Exp>> => LValAssign { <> },
 }
 
 UnmatchedStmt: Stmt = {
@@ -173,7 +180,7 @@ MulExp: Exp = {
 }
 
 UnaryExp: Exp = {
-  // 函数调用优先于 PrimaryExp（避免把 IDENT 当 LVal 解析）
+  // 函数调用优先于 PrimaryExp（避免把 IDENT 当 LValExp 解析）
   <PrimaryExp> => <>,
   <FuncCall> => Exp::Call(<>),
   <op: UnaryOp> <rhs: UnaryExp> => Exp::Unary { op, exp: Box::new(rhs) },
@@ -186,11 +193,11 @@ FuncCall: Call = {
 PrimaryExp: Exp = {
   "(" <Exp> ")" => <>,
   <Number> => Exp::Number(<>),
-  <LVal> => Exp::LVal(<>),
+  <LValExp> => Exp::LValExp(<>),
 };
 
-LVal: LVal = {
-  <Ident> => LVal::Var(<>),
+LValExp: LValExp = {
+  <ident: Ident> <index: Index<Exp>> => LValExp { <> },
 };
 
 UnaryOp: UnaryOp = { 
@@ -219,4 +226,9 @@ Comma<T>: Vec<T> = {
     None => v,
     Some(e) => { v.push(e); v }
   }
+};
+
+// Match a sequence of items separated by semicolons
+Index<T>: Vec<T> = {
+    <v:("[" <T> "]")*> => v
 };
