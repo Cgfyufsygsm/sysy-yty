@@ -1,6 +1,6 @@
 use core::panic;
 
-use crate::frontend::{env::Environment, symbol::Variable, util::{Fold, Eval, fresh_bb_name}};
+use crate::frontend::{env::Environment, symbol::Variable, util::{fresh_bb_name, get_var_type, Eval, Fold}, array_init::*};
 
 use super::ast::*;
 use koopa::ir::{builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp::*, FunctionData, Type, Value};
@@ -61,7 +61,7 @@ impl GenerateIR for FuncDef {
       let value = env.ctx.func_data().params()[i];
       let alloc = env.ctx.alloc_and_store(value, param.btype.clone().into());
       env.ctx.set_value_name(value, param.ident.clone());
-      env.table.insert_var(&param.ident, alloc);
+      env.table.insert_local(&param.ident, alloc, Type::get_i32(), false);
     }
     
 
@@ -147,18 +147,39 @@ impl GenerateIR for ConstDef {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
-
-    // 先认为 ConstInitVal 只有常量
-
-    let value = match &self.init {
-      ConstInitVal::ConstExp(exp) => exp.eval(env),
-      _ => panic!("unimplemented ConstInitVals")
-    };
+    let ty = get_var_type(&self.size, env);
 
     if env.ctx.is_global() {
-      env.table.insert_global_const(&self.ident, value);
+      // 处理全局常量
+      match &self.init {
+        ConstInitVal::ConstExp(exp) => {
+          // 单个变量的情况
+          let value = exp.eval(env);
+          env.table.insert_global_const(&self.ident, value);
+        }
+        ConstInitVal::ConstInitVals(_) => {
+          let init = generate_global_init_vals(env, ty.clone(), &self.init);
+          let alloc = env.ctx.global_builder().global_alloc(init);
+          env.ctx.set_global_name(alloc, self.ident.clone());
+          env.table.insert_global(&self.ident, alloc, ty.clone(), true);
+        }
+      }
     } else {
-      env.table.insert_const(&self.ident, value);
+      // 处理局部常量
+      match &self.init {
+        ConstInitVal::ConstExp(exp) => {
+          // 单个变量的情况
+          let value = exp.eval(env);
+          env.table.insert_const(&self.ident, value);
+        }
+        ConstInitVal::ConstInitVals(_) => {
+          let ptr = env.ctx.local_builder().alloc(ty.clone());
+          env.ctx.add_inst(ptr);
+          env.table.insert_local(&self.ident, ptr, ty.clone(), true);
+          env.ctx.set_value_name(ptr, self.ident.clone());
+          generate_local_init_vals(env, ty, ptr, &self.init);
+        }
+      }
     }
   }
 }
@@ -167,36 +188,44 @@ impl GenerateIR for VarDef {
   type Output = ();
 
   fn generate_on(&self, env: &mut Environment) {
+    let ty = get_var_type(&self.size, env);
+
     if env.ctx.is_global() {
       let init = if let Some(init) = &self.init {
         match init {
           InitVal::Exp(exp) => exp.fold(env).generate_on(env),
-          _ => panic!("unimplemented"),
+          InitVal::InitVals(_) => generate_global_init_vals(env, ty.clone(), init),
         }
       } else {
-        env.ctx.global_builder().zero_init(Type::get_i32())
-        // TODO: 这里的 type 应该是根据变量类型来决定的，数组的情况应该要改，看看怎么改
+        env.ctx.global_builder().zero_init(ty.clone())
       };
       let alloc = env.ctx.global_builder().global_alloc(init);
       env.ctx.set_global_name(alloc, self.ident.clone());
-      env.table.insert_global_var(&self.ident, alloc);
+      env.table.insert_global(&self.ident, alloc, ty.clone(), false);
     } else {
-      let ptr = env.ctx.local_builder().alloc(Type::get_i32());
+      // 处理局部变量
+      let ptr = env.ctx.local_builder().alloc(ty.clone());
       env.ctx.add_inst(ptr);
 
-      env.table.insert_var(&self.ident, ptr);
+      env.table.insert_local(&self.ident, ptr, ty.clone(), false);
+      env.ctx.set_value_name(ptr, self.ident.clone());
 
       if let Some(init) = &self.init {
-        let val = match init {
-          InitVal::Exp(exp) => exp.fold(env).generate_on(env),
-          _ => panic!("unimplemented"),
+        match init {
+          InitVal::Exp(exp) => {
+            let val = exp.fold(env).generate_on(env);
+            let store_inst = env.ctx.local_builder().store(val, ptr);
+            env.ctx.add_inst(store_inst);
+          }
+          InitVal::InitVals(_) => {
+            generate_local_init_vals(env, ty.clone(), ptr, init);
+          }
         };
-        let store_inst = env.ctx.local_builder().store(val, ptr);
-        env.ctx.add_inst(store_inst);
       }
     }
   }
 }
+
 
 impl GenerateIR for Stmt {
   type Output = ();
@@ -247,8 +276,23 @@ impl GenerateIR for LValAssign {
 
   fn generate_on(&self, env: &mut Environment) -> Value {
     match env.table.get_var(&self.ident) {
-      Some(Variable::Var(ptr)) => *ptr,
-      Some(Variable::Const(value)) => env.ctx.local_builder().integer(*value),
+      Some(Variable::Var(ptr)) => {
+        if !self.index.is_empty() {
+          panic!("{} is not an array", self.ident);
+        }
+        *ptr
+      }
+      Some(Variable::Array(ptr)) => {
+        let mut elem_ptr = *ptr;
+        for index in &self.index {
+          let index_val = index.fold(env).generate_on(env);
+          elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, index_val);
+          env.ctx.add_inst(elem_ptr);
+        }
+        elem_ptr
+      },
+      Some(Variable::Const(_)) => panic!("Cannot assign to constant variable: {}", self.ident),
+      Some(Variable::ConstArray(_)) => panic!("Cannot assign to constant array: {}", self.ident),
       None => panic!("Variable {} not found in symbol table", self.ident),
     }
   }
@@ -585,6 +629,17 @@ impl GenerateIR for LValExp {
       }
       Some(Variable::Var(ptr)) => {
         let load_inst = env.ctx.local_builder().load(*ptr);
+        env.ctx.add_inst(load_inst);
+        load_inst
+      }
+      Some(Variable::Array(ptr) | Variable::ConstArray(ptr)) => {
+        let mut elem_ptr = *ptr;
+        for index in &self.index {
+          let index_val = index.fold(env).generate_on(env);
+          elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, index_val);
+          env.ctx.add_inst(elem_ptr);
+        }
+        let load_inst = env.ctx.local_builder().load(elem_ptr);
         env.ctx.add_inst(load_inst);
         load_inst
       }

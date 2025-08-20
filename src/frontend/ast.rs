@@ -1,15 +1,15 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CompUnit {
   pub comp_items: Vec<CompItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CompItem {
   FuncDef(FuncDef),
   Decl(Decl),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncDef {
   pub btype: BType,
   pub ident: String,
@@ -23,68 +23,68 @@ pub enum BType {
   Void,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FuncParam {
   pub btype: BType,
   pub ident: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block {
   pub items: Vec<BlockItem>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BlockItem {
   Decl(Decl),
   Stmt(Stmt),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Decl {
   Const(ConstDecl),
   Var(VarDecl),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstDecl {
   pub btype: BType,
   pub defs: Vec<ConstDef>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarDecl {
   pub btype: BType,
   pub defs: Vec<VarDef>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ConstDef {
   pub ident: String,
   pub size: Vec<ConstExp>,
   pub init: ConstInitVal,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VarDef {
   pub ident: String,
   pub size: Vec<ConstExp>,
   pub init: Option<InitVal>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ConstInitVal {
   ConstExp(ConstExp),
   ConstInitVals(Box<Vec<ConstInitVal>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum InitVal {
   Exp(Exp),
   InitVals(Box<Vec<InitVal>>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Stmt {
   Return(Option<Exp>),
   Assign(Assign),
@@ -114,14 +114,14 @@ pub struct Break;
 #[derive(Debug, Clone)]
 pub struct Continue;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct If {
   pub cond: Exp,
   pub then_block: Box<Stmt>,
   pub else_block: Option<Box<Stmt>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct While {
   pub cond: Exp,
   pub body: Box<Stmt>,
