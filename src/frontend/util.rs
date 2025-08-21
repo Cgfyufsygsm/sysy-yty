@@ -76,7 +76,7 @@ impl Fold for Exp {
       Exp::LValExp(lval) => match env.table.get_var(&lval.ident) {
         Some(Variable::Const(value)) => Exp::Number(*value),
         Some(Variable::Var(_var)) => Exp::LValExp(LValExp { ident: lval.ident.to_string(), index: vec![] }),
-        Some(Variable::ConstArray(_) | Variable::Array(_)) => self.clone(),
+        Some(Variable::ConstArray(_) | Variable::Array(_) | Variable::Ptr(_)) => self.clone(),
         None => panic!("Variable {} not found in symbol table", lval.ident),
       },
 

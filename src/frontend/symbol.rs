@@ -20,6 +20,7 @@ pub enum Variable {
   Const(i32),
   Array(Value),
   ConstArray(Value),
+  Ptr(Value),
 }
 
 impl SymbolTable {
@@ -43,6 +44,10 @@ impl SymbolTable {
     self.scopes.last_mut().expect("No scope to insert into").insert(ident.into(), Variable::Array(value));
   }
 
+  fn insert_ptr(&mut self, ident: &str, value: Value) {
+    self.scopes.last_mut().expect("No scope to insert into").insert(ident.into(), Variable::Ptr(value));
+  }
+
   fn insert_const_arr(&mut self, ident: &str, value: Value) {
     self.scopes.last_mut().expect("No scope to insert into").insert(ident.into(), Variable::ConstArray(value));
   }
@@ -54,6 +59,7 @@ impl SymbolTable {
       match ty.kind() {
         TypeKind::Array(_, _) => self.insert_arr(ident, value),
         TypeKind::Int32 => self.insert_var(ident, value),
+        TypeKind::Pointer(_) => self.insert_ptr(ident, value),
         _ => panic!("Unsupported local variable type: {:?}", ty),
       }
     }

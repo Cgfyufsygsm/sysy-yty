@@ -3,7 +3,7 @@ use core::panic;
 use crate::frontend::{env::Environment, symbol::Variable, util::{fresh_bb_name, get_var_type, Eval, Fold}, array_init::*};
 
 use super::ast::*;
-use koopa::ir::{builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp::*, FunctionData, Type, Value};
+use koopa::ir::{builder::{GlobalInstBuilder, LocalInstBuilder, ValueBuilder}, BinaryOp::*, FunctionData, Type, TypeKind, Value};
 
 pub trait GenerateIR {
   type Output;
@@ -43,7 +43,7 @@ impl GenerateIR for FuncDef {
     let mut params = vec![];
     for param in &self.params {
       let ident = format!("@{}", param.ident);
-      params.push((Some(ident), param.btype.clone().into())); // Assuming all params are i32 for simplicity
+      params.push((Some(ident), param.get_type(env)));
     }
     let func_data = FunctionData::with_param_names(
       format!("@{}", self.ident),
@@ -59,9 +59,11 @@ impl GenerateIR for FuncDef {
 
     for (i, param) in self.params.iter().enumerate() {
       let value = env.ctx.func_data().params()[i];
-      let alloc = env.ctx.alloc_and_store(value, param.btype.clone().into());
       env.ctx.set_value_name(value, param.ident.clone());
-      env.table.insert_local(&param.ident, alloc, Type::get_i32(), false);
+
+      let param_ty = param.get_type(env);
+      let alloc = env.ctx.alloc_and_store(value, param_ty.clone());
+      env.table.insert_local(&param.ident, alloc, param_ty, false);
     }
     
 
@@ -291,6 +293,22 @@ impl GenerateIR for LValAssign {
         }
         elem_ptr
       },
+      Some(Variable::Ptr(ptr)) => {
+        let load_inst = env.ctx.local_builder().load(*ptr);
+        env.ctx.add_inst(load_inst);
+        let mut elem_ptr = load_inst;
+
+        for (i, index) in self.index.iter().enumerate() {
+          let index_val = index.fold(env).generate_on(env);
+          if i > 0 {
+            elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, index_val);
+          } else {
+            elem_ptr = env.ctx.local_builder().get_ptr(elem_ptr, index_val);
+          }
+          env.ctx.add_inst(elem_ptr);
+        }
+        elem_ptr
+      }
       Some(Variable::Const(_)) => panic!("Cannot assign to constant variable: {}", self.ident),
       Some(Variable::ConstArray(_)) => panic!("Cannot assign to constant array: {}", self.ident),
       None => panic!("Variable {} not found in symbol table", self.ident),
@@ -639,9 +657,66 @@ impl GenerateIR for LValExp {
           elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, index_val);
           env.ctx.add_inst(elem_ptr);
         }
-        let load_inst = env.ctx.local_builder().load(elem_ptr);
+        let cur_data_ty = env.ctx.get_valuedata(elem_ptr).ty();
+
+        if let TypeKind::Pointer(ty) = cur_data_ty.kind() {
+          match ty.kind() {
+            TypeKind::Array(_, _) => {
+              let zero_idx = env.ctx.local_builder().integer(0);
+              elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, zero_idx);
+              env.ctx.add_inst(elem_ptr);
+              elem_ptr
+            }
+            TypeKind::Int32 => {
+              let load_inst = env.ctx.local_builder().load(elem_ptr);
+              env.ctx.add_inst(load_inst);
+              load_inst
+            }
+            _ => unreachable!(""),
+          }
+        } else {
+          unreachable!("Expected pointer type for array element access, found: {:?}", cur_data_ty);
+        }
+      }
+      Some(Variable::Ptr(ptr)) => {
+        let load_inst = env.ctx.local_builder().load(*ptr);
         env.ctx.add_inst(load_inst);
-        load_inst
+
+        if self.index.is_empty() {
+          return load_inst;
+        }
+
+        let mut elem_ptr = load_inst;
+        for (i, index) in self.index.iter().enumerate() {
+          let index_val = index.fold(env).generate_on(env);
+          if i > 0 {
+            elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, index_val);
+          } else {
+            elem_ptr = env.ctx.local_builder().get_ptr(elem_ptr, index_val);
+          }
+          env.ctx.add_inst(elem_ptr);
+        }
+
+        let cur_data_ty = env.ctx.get_valuedata(elem_ptr).ty();
+
+        if let TypeKind::Pointer(ty) = cur_data_ty.kind() {
+          match ty.kind() {
+            TypeKind::Array(_, _) => {
+              let zero_idx = env.ctx.local_builder().integer(0);
+              elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, zero_idx);
+              env.ctx.add_inst(elem_ptr);
+              elem_ptr
+            }
+            TypeKind::Int32 => {
+              let load_inst = env.ctx.local_builder().load(elem_ptr);
+              env.ctx.add_inst(load_inst);
+              load_inst
+            }
+            _ => unreachable!(""),
+          }
+        } else {
+          unreachable!("Expected pointer type for array element access, found: {:?}", cur_data_ty);
+        }
       }
       None => panic!("Variable {} not found in symbol table", self.ident),
     }

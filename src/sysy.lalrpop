@@ -38,7 +38,8 @@ FuncDef: FuncDef = {
 }
 
 FuncParam: FuncParam = {
-  <btype: BType> <ident: Ident> => FuncParam { <> }
+  <btype: BType> <ident: Ident> => FuncParam { <>, is_array: false, array_size: vec![] },
+  <btype: BType> <ident: Ident> "[" "]" <array_size: Index<ConstExp>> => FuncParam { <>, is_array: true}
 }
 
 Block: Block = "{" <items: BlockItem*> "}" => Block { <> };

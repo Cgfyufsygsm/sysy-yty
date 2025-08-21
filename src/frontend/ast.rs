@@ -1,3 +1,7 @@
+use koopa::ir::Type;
+
+use crate::frontend::{env::Environment, util::Eval};
+
 #[derive(Debug, Clone)]
 pub struct CompUnit {
   pub comp_items: Vec<CompItem>,
@@ -27,6 +31,22 @@ pub enum BType {
 pub struct FuncParam {
   pub btype: BType,
   pub ident: String,
+  pub is_array: bool,
+  pub array_size: Vec<ConstExp>,
+}
+
+impl FuncParam {
+  pub fn get_type(&self, env: &mut Environment) -> Type {
+    let mut param_ty = self.btype.clone().into();
+    if self.is_array {
+      for len_exp in self.array_size.iter().rev() {
+        let len = len_exp.eval(env) as usize;
+        param_ty = Type::get_array(param_ty, len);
+      }
+      param_ty = Type::get_pointer(param_ty);
+    }
+    param_ty
+  }
 }
 
 #[derive(Debug, Clone)]
