@@ -657,7 +657,7 @@ impl GenerateIR for LValExp {
           elem_ptr = env.ctx.local_builder().get_elem_ptr(elem_ptr, index_val);
           env.ctx.add_inst(elem_ptr);
         }
-        let cur_data_ty = env.ctx.get_valuedata(elem_ptr).ty();
+        let cur_data_ty = env.ctx.get_value_ty(elem_ptr);
 
         if let TypeKind::Pointer(ty) = cur_data_ty.kind() {
           match ty.kind() {
@@ -697,7 +697,7 @@ impl GenerateIR for LValExp {
           env.ctx.add_inst(elem_ptr);
         }
 
-        let cur_data_ty = env.ctx.get_valuedata(elem_ptr).ty();
+        let cur_data_ty = env.ctx.get_value_ty(elem_ptr);
 
         if let TypeKind::Pointer(ty) = cur_data_ty.kind() {
           match ty.kind() {
