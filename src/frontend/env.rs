@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::frontend::symbol::SymbolTable;
-use koopa::ir::{builder::{BasicBlockBuilder, GlobalBuilder, LocalBuilder, LocalInstBuilder}, BasicBlock, Function, FunctionData, Program, Type, Value};
+use koopa::ir::{builder::{BasicBlockBuilder, GlobalBuilder, GlobalInstBuilder, LocalBuilder, LocalInstBuilder, ValueBuilder}, BasicBlock, BinaryOp, Function, FunctionData, Program, Type, Value};
 
 #[derive(Default)]
 pub struct Environment {
@@ -59,12 +59,72 @@ impl Context {
     self.func.is_none()
   }
 
-  pub fn local_builder(&mut self) -> LocalBuilder {
+  fn local_builder(&mut self) -> LocalBuilder {
     self.func_data().dfg_mut().new_value()
   }
 
-  pub fn global_builder(&mut self) -> GlobalBuilder {
+  fn global_builder(&mut self) -> GlobalBuilder {
     self.program.new_value()
+  }
+
+  pub fn local_integer(&mut self, value: i32) -> Value {
+    self.local_builder().integer(value)
+  }
+
+  pub fn global_integer(&mut self, value: i32) -> Value {
+    self.global_builder().integer(value)
+  }
+
+  pub fn global_alloc(&mut self, init: Value) -> Value {
+    self.global_builder().global_alloc(init)
+  }
+
+  pub fn local_alloc(&mut self, ty: Type) -> Value {
+    self.local_builder().alloc(ty)
+  }
+
+  pub fn local_store(&mut self, value: Value, dest: Value) -> Value {
+    self.local_builder().store(value, dest)
+  }
+
+  pub fn global_zero_init(&mut self, ty: Type) -> Value {
+    self.global_builder().zero_init(ty)
+  }
+
+  pub fn global_aggregate(&mut self, elems: Vec<Value>) -> Value {
+    self.global_builder().aggregate(elems)
+  }
+
+  pub fn local_load(&mut self, src: Value) -> Value {
+    self.local_builder().load(src)
+  }
+
+  pub fn ret(&mut self, value: Option<Value>) -> Value {
+    self.local_builder().ret(value)
+  }
+
+  pub fn branch(&mut self, cond: Value, true_bb: BasicBlock, false_bb: BasicBlock) -> Value {
+    self.local_builder().branch(cond, true_bb, false_bb)
+  }
+
+  pub fn jump(&mut self, target: BasicBlock) -> Value {
+    self.local_builder().jump(target)
+  }
+
+  pub fn get_elem_ptr(&mut self, src: Value, index: Value) -> Value {
+    self.local_builder().get_elem_ptr(src, index)
+  }
+
+  pub fn get_ptr(&mut self, src: Value, index: Value) -> Value {
+    self.local_builder().get_ptr(src, index)
+  }
+
+  pub fn binary(&mut self, op: BinaryOp, lhs: Value, rhs: Value) -> Value {
+    self.local_builder().binary(op, lhs, rhs)
+  }
+
+  pub fn call(&mut self, callee: Function, args: Vec<Value>) -> Value {
+    self.local_builder().call(callee, args)
   }
 
   pub fn alloc_and_store(&mut self, value: Value, ty: Type) -> Value {

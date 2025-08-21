@@ -1,4 +1,4 @@
-use koopa::ir::{builder::{LocalInstBuilder, ValueBuilder}, Type, TypeKind, Value};
+use koopa::ir::{Type, TypeKind, Value};
 
 use crate::frontend::{ast::{ConstExp, ConstInitVal, Exp, InitVal}, env::Environment, ir_gen::GenerateIR, util::{Eval, Fold}};
 
@@ -125,8 +125,8 @@ where
   T::Expr: ExprGenerator,
 {
   for i in 0..len {
-    let index = env.ctx.local_builder().integer(i as i32);
-    let elem_ptr = env.ctx.local_builder().get_elem_ptr(ptr, index);
+    let index = env.ctx.local_integer(i as i32);
+    let elem_ptr = env.ctx.get_elem_ptr(ptr, index);
     env.ctx.add_inst(elem_ptr);
 
     if iter.is_empty() {
@@ -148,7 +148,7 @@ where
             let vref = iter.next().unwrap(); // consume an Exp
             if let Some(exp) = vref.as_exp() {
               let val = exp.generate(env);
-              let store_inst = env.ctx.local_builder().store(val, elem_ptr);
+              let store_inst = env.ctx.local_store(val, elem_ptr);
               env.ctx.add_inst(store_inst);
             } else {
               panic!("Expected expression to initialize scalar element");
@@ -181,7 +181,7 @@ where
   for _i in 0..len {
     // 没有更多显式初始化 -> 直接生成零初始化（包括递归零）
     if iter.is_empty() {
-      elems.push(env.ctx.global_builder().zero_init(base_ty.clone()));
+      elems.push(env.ctx.global_zero_init(base_ty.clone()));
       continue;
     }
 
@@ -199,7 +199,7 @@ where
         let vref = iter.next().unwrap(); // consume one expression
         if let Some(exp) = vref.as_exp() {
           let val = exp.evaluate(env);
-          elems.push(env.ctx.global_builder().integer(val));
+          elems.push(env.ctx.global_integer(val));
         } else {
           panic!("Expected expression to initialize scalar element");
         }
@@ -208,7 +208,7 @@ where
       TypeKind::Array(inner_base, inner_len) => {
         // 对于子数组类型：递归从同一个 iter 中消费足够数量的项来填满该子数组
         let sub_elems = fill_global_array_from_iter(env, inner_base.clone(), *inner_len as i32, iter);
-        let agg = env.ctx.global_builder().aggregate(sub_elems);
+        let agg = env.ctx.global_aggregate(sub_elems);
         elems.push(agg);
       }
 
@@ -233,7 +233,7 @@ where
     match ty.kind() {
       TypeKind::Int32 => {
         let v = exp.evaluate(env);
-        return env.ctx.global_builder().integer(v);
+        return env.ctx.global_integer(v);
       }
       TypeKind::Array(_, _) => {
         // 把单个表达式当作 "{ expr }"
@@ -241,7 +241,7 @@ where
         let mut iter = InitIter::new(tmp.as_slice());
         if let TypeKind::Array(base_ty, len) = ty.kind() {
           let elems = fill_global_array_from_iter(env, base_ty.clone(), *len as i32, &mut iter);
-          return env.ctx.global_builder().aggregate(elems);
+          return env.ctx.global_aggregate(elems);
         } else {
           unreachable!();
         }
@@ -257,12 +257,12 @@ where
       TypeKind::Int32 => {
         // 标量用大括号：若为空 -> zero；否则用第一个表达式的值
         if iter.is_empty() {
-          return env.ctx.global_builder().zero_init(ty);
+          return env.ctx.global_zero_init(ty);
         } else {
           let vref = iter.next().unwrap();
           if let Some(exp) = vref.as_exp() {
             let v = exp.evaluate(env);
-            return env.ctx.global_builder().integer(v);
+            return env.ctx.global_integer(v);
           } else {
             panic!("Invalid initializer for scalar: expected expression inside braces");
           }
@@ -272,7 +272,7 @@ where
         let elems = fill_global_array_from_iter(env, base_ty.clone(), *len as i32, &mut iter);
         // 额外剩余项：你可以选择 panic! 报错或者忽略（这里忽略）
         // if !iter.is_empty() { panic!("Too many initializers for array") }
-        return env.ctx.global_builder().aggregate(elems);
+        return env.ctx.global_aggregate(elems);
       }
       _ => panic!("Unsupported type for global initialization: {:?}", ty),
     }
@@ -284,14 +284,14 @@ where
 pub fn generate_local_zero_vals(env: &mut Environment, ty: Type, ptr: Value) {
   match ty.kind() {
     TypeKind::Int32 => {
-      let zero = env.ctx.local_builder().integer(0);
-      let store_inst = env.ctx.local_builder().store(zero, ptr);
+      let zero = env.ctx.local_integer(0);
+      let store_inst = env.ctx.local_store(zero, ptr);
       env.ctx.add_inst(store_inst);
     }
     TypeKind::Array(base_ty, len) => {
       for i in 0..*len {
-        let index = env.ctx.local_builder().integer(i as i32);
-        let elem_ptr = env.ctx.local_builder().get_elem_ptr(ptr, index);
+        let index = env.ctx.local_integer(i as i32);
+        let elem_ptr = env.ctx.get_elem_ptr(ptr, index);
         env.ctx.add_inst(elem_ptr);
         generate_local_zero_vals(env, base_ty.clone(), elem_ptr);
       }
@@ -309,7 +309,7 @@ where
     match ty.kind() {
       TypeKind::Int32 => {
         let val = exp.generate(env);
-        let store_inst = env.ctx.local_builder().store(val, ptr);
+        let store_inst = env.ctx.local_store(val, ptr);
         env.ctx.add_inst(store_inst);
       }
       TypeKind::Array(base_ty, len) => {
