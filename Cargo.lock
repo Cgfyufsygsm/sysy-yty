@@ -563,6 +563,7 @@ dependencies = [
  "koopa",
  "lalrpop",
  "lalrpop-util",
+ "once_cell",
 ]
 
 [[package]]

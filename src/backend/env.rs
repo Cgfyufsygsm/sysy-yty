@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::{collections::HashMap};
 
-use koopa::ir::{BasicBlock, Function, FunctionData, Program, Value};
+use koopa::ir::{BasicBlock, Function, FunctionData, Program, Type, Value};
 use crate::backend::frame::FrameLayout;
 
 pub struct Environment<'a> {
@@ -72,6 +72,14 @@ impl<'a> Environment<'a> {
 
   pub fn get_func_data(&self, func: Function) -> &FunctionData {
     self.program.func(func)
+  }
+
+  pub fn get_value_ty(&self, value: Value) -> Type {
+    if value.is_global() {
+      self.program.borrow_value(value).ty().clone()
+    } else {
+      self.func_data().dfg().value(value).ty().clone()
+    }
   }
 
   pub fn get_bb_name(&self, bb: BasicBlock) -> &str {

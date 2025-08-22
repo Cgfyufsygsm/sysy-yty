@@ -1,10 +1,15 @@
 use std::collections::HashMap;
-use koopa::ir::{Value, FunctionData, ValueKind};
-use crate::backend::util::sp_off;
+use koopa::ir::{FunctionData, Value, ValueKind};
+use crate::backend::util::{addi, calculate_size, lw, sw};
+
+struct ValueOffset {
+  offset: i32,
+  is_ptr: bool,
+}
 
 pub struct FrameLayout {
   size: i32,
-  offsets: HashMap<Value, i32>,
+  offsets: HashMap<Value, ValueOffset>,
   param_regs: HashMap<Value, String>,
   ra_saved: bool,
   outgoing_args_size: i32,
@@ -16,20 +21,25 @@ impl FrameLayout {
   }
 
   pub fn get_offset(&self, val: &Value) -> i32 {
-    *self.offsets.get(val).expect("value not in frame layout") + self.outgoing_args_size
+    self.offsets.get(val).expect("value not in frame layout").offset + self.outgoing_args_size
+  }
+
+  // getelemptr 和 getptr 的结果是指针类型
+  // 必须要在 store 和 load 的时候进行特殊处理
+  // 先把指针的值加载到寄存器里，再通过寄存器访存
+  pub fn is_ptr(&self, val: &Value) -> bool {
+    if val.is_global() {
+      return false;
+    }
+    self.offsets.get(val).expect("value not in frame layout").is_ptr
   }
 
   pub fn generate_prologue(&self) -> String {
     let mut asm = String::new();
-    if self.size() <= 2047 {
-      asm.push_str(&format!("  addi  sp, sp, -{}\n", self.size()));
-    } else {
-      asm.push_str(&format!("  li    t0, {}\n", -self.size()));
-      asm.push_str("  add   sp, sp, t0\n");
-    }
+    asm.push_str(&addi("sp", "sp", -self.size()));
 
     if self.ra_saved {
-      asm.push_str(&format!("  sw    ra, {}\n", sp_off(self.size - 4)));
+      asm.push_str(&sw("ra", "sp", self.size - 4));
     }
     asm
   }
@@ -39,15 +49,10 @@ impl FrameLayout {
     asm.push_str(&format!("{}_ret:\n", func_name));
 
     if self.ra_saved {
-      asm.push_str(&format!("  lw    ra, {}\n", sp_off(self.size - 4)));
+      asm.push_str(&lw("ra", "sp", self.size - 4));
     }
 
-    if self.size() <= 2047 {
-      asm.push_str(&format!("  addi  sp, sp, {}\n", self.size()));
-    } else {
-      asm.push_str(&format!("  li    t0, {}\n", self.size()));
-      asm.push_str("  add   sp, sp, t0\n");
-    }
+    asm.push_str(&addi("sp", "sp", self.size()));
     asm.push_str("  ret\n");
     asm
   }
@@ -83,12 +88,16 @@ pub fn layout_frame(func: &FunctionData) -> FrameLayout {
 
       // alloc 占 4 字节
       if let ValueKind::Alloc(_) = data.kind() {
-        offsets.insert(inst, offset);
-        offset += 4;
-      }
-      // 其余有返回值的指令
-      else if !data.ty().is_unit() {
-        offsets.insert(inst, offset);
+        offsets.insert(inst, ValueOffset { offset, is_ptr: false });
+        offset += calculate_size(data.ty().kind().clone(), true) as i32;
+      } else if let ValueKind::GetElemPtr(_) = data.kind() {
+        offsets.insert(inst, ValueOffset { offset, is_ptr: true });
+        offset += 4; // GetElemPtr 结果是指针，固定占用 4 字节
+      } else if let ValueKind::GetPtr(_) = data.kind() {
+        offsets.insert(inst, ValueOffset { offset, is_ptr: true });
+        offset += 4; // GetPtr 结果是指针，固定占用 4 字节
+      } else if !data.ty().is_unit() {
+        offsets.insert(inst, ValueOffset { offset, is_ptr: false });
         offset += 4;
       }
     }
@@ -105,7 +114,9 @@ pub fn layout_frame(func: &FunctionData) -> FrameLayout {
     if i < 8 {
       param_regs.insert(param, format!("a{}", i));
     } else {
-      offsets.insert(param, aligned + (i as i32 - 8) * 4);
+      // TODO 处理数组参数
+      offsets.insert(param, ValueOffset { offset: aligned + (i as i32 - 8) * 4, is_ptr: false });
+      // offsets.insert(param, aligned + (i as i32 - 8) * 4);
     }
   }
 

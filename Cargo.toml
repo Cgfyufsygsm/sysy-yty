@@ -10,3 +10,4 @@ lalrpop = "0.19.7"
 koopa = "0.0.8"
 lalrpop-util = { version = "0.19.7", features = ["lexer"] }
 clap = { version = "4.3.24", features = ["derive"] }
+once_cell = "1.21.3"

@@ -61,7 +61,6 @@ fn compute_elem_ptr_from_var(env: &mut Environment, var: &Variable, indices: &[E
 /// - 如果是 pointer -> int   : load(addr) 返回值
 fn load_or_decay_if_needed(env: &mut Environment, ptr: Value) -> Value {
   let cur_data_ty = env.ctx.get_value_ty(ptr);
-  println!("load_or_decay_if_needed: ptr = {:?}, type = {:?}", ptr, cur_data_ty);
   if let TypeKind::Pointer(ty) = cur_data_ty.kind() {
     match ty.kind() {
       TypeKind::Array(_, _) => {

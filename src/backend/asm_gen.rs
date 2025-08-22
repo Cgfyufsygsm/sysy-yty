@@ -1,7 +1,8 @@
+use core::panic;
 use std::{collections::HashMap, ops::Deref};
 
-use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Call, Integer, Jump, Load, Return, Store}, FunctionData, Program, TypeKind, ValueKind};
-use crate::backend::{env::Environment, frame::{layout_frame}, util::{sp_off, load_operand_to_reg}};
+use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Call, GetElemPtr, GetPtr, Integer, Jump, Load, Return, Store}, FunctionData, Program, TypeKind, Value, ValueKind};
+use crate::backend::{env::Environment, frame::layout_frame, reg::RegGuard, util::{calculate_size, load_operand_to_reg, lw, addi, sw}};
 
 pub trait GenerateProgAsm {
   fn generate_asm(&self) -> String;
@@ -18,6 +19,30 @@ static SYSY_LIB_FUNCTIONS: [&str; 8] = [
   "getint", "getch", "getarray", "putint", "putch", "putarray", "starttime", "stoptime",
 ];
 
+fn generate_global_alloc(
+  program: &Program,
+  value: &Value,
+) -> String {
+  let mut asm = String::new();
+  match program.borrow_value(*value).deref().kind() {
+    ValueKind::Integer(int_val) => {
+      asm.push_str(&format!("  .word {}\n", int_val.value()));
+    }
+    ValueKind::ZeroInit(_) => {
+      let ty = program.borrow_value(*value).deref().ty().kind().clone();
+      let size = calculate_size(ty, false);
+      asm.push_str(&format!("  .zero {}\n", size));
+    }
+    ValueKind::Aggregate(aggregate) => {
+      for elem in aggregate.elems() {
+        asm.push_str(&generate_global_alloc(program, elem));
+      }
+    }
+    _ => panic!("Expected Integer, ZeroInit or Aggregate for global variable"),
+  }
+  asm
+}
+
 impl GenerateProgAsm for Program {
   fn generate_asm(&self) -> String {
     let mut asm = String::from("  .data\n");
@@ -31,15 +56,7 @@ impl GenerateProgAsm for Program {
       asm.push_str(&format!("  .globl {}\n{}:\n", var_name, var_name));
 
       if let ValueKind::GlobalAlloc(global_alloc) = var_data.kind() {
-        match self.borrow_value(global_alloc.init()).deref().kind() {
-          ValueKind::Integer(int_val) => {
-            asm.push_str(&format!("  .word {}\n", int_val.value()));
-          }
-          ValueKind::ZeroInit(_) => {
-            asm.push_str("  .zero 4\n");
-          }
-          _ => unreachable!("Expected Integer or ZeroInit for global variable, found {:?}", var_data.kind()),
-        }
+        asm.push_str(&generate_global_alloc(self, &global_alloc.init()));
       } else {
         unreachable!("Expected GlobalAlloc for global variable, found {:?}", var_data.kind());
       }
@@ -120,6 +137,9 @@ impl GenerateAsm for ValueData {
       ValueKind::Alloc(_) => String::new(),
       ValueKind::Call(call) => call.generate_asm(env),
 
+      ValueKind::GetElemPtr(get_elem_ptr) => get_elem_ptr.generate_asm(env),
+      ValueKind::GetPtr(get_ptr) => get_ptr.generate_asm(env),
+
       default => {
         // Handle other value kinds if necessary
         format!("  ; Unhandled value kind: {:?}\n", default)
@@ -136,7 +156,7 @@ impl GenerateAsm for Integer {
     ) -> String {
     let mut asm = String::new();
     asm.push_str(&format!("  li    t0, {}\n", self.value()));
-    asm.push_str(&format!("  sw    t0, {}\n", sp_off(env.get_self_offset())));
+    asm.push_str(&sw("t0", "sp", env.get_self_offset()));
     asm
   }
 }
@@ -148,9 +168,17 @@ impl GenerateAsm for Load {
     ) -> String {
     let mut asm = String::new();
     let ptr = self.src();
-    let (ptr_asm, ptr_reg) = load_operand_to_reg(env, ptr, "t0".into());
-    asm.push_str(&ptr_asm);
-    asm.push_str(&format!("  sw    {}, {}\n", ptr_reg, sp_off(env.get_self_offset())));
+    let ptr_reg_guard = RegGuard::new().expect("No register available");
+    let mut ptr_reg = ptr_reg_guard.name().to_string();
+    asm.push_str(&load_operand_to_reg(env, ptr, &mut ptr_reg));
+    if !env.frame_layout().is_ptr(&ptr) {
+      asm.push_str(&sw(&ptr_reg, "sp", env.get_self_offset()));
+    } else {
+      // 此时 ptr_reg 存的是指针的值
+      let tmp_reg = RegGuard::new().expect("No register available");
+      asm.push_str(&lw(tmp_reg.name(), &ptr_reg, 0));
+      asm.push_str(&sw(tmp_reg.name(), "sp", env.get_self_offset()));
+    }
     asm
   }
 }
@@ -164,14 +192,26 @@ impl GenerateAsm for Store {
     let value = self.value();
 
     let ptr = self.dest();
-    let (val_asm, val_reg) = load_operand_to_reg(env, value, "t0".into());
-    asm.push_str(&val_asm);
+
+    let val_reg_guard = RegGuard::new().expect("No register available");
+    let mut val_reg = val_reg_guard.name().to_string();
+    asm.push_str(&load_operand_to_reg(env, value, &mut val_reg));
     if ptr.is_global() {
-      // 暂时把地址存在 t1
-      asm.push_str(&env.load_global_addr(ptr, "t1"));
-      asm.push_str(&format!("  sw    {}, 0(t1)\n", val_reg));
+      let addr_reg_guard = RegGuard::new().expect("No register available");
+      let mut addr_reg = addr_reg_guard.name().to_string();
+      asm.push_str(&env.load_global_addr(ptr, &mut addr_reg));
+      asm.push_str(&sw(&val_reg, &addr_reg, 0));
     } else {
-      asm.push_str(&format!("  sw    {}, {}\n", val_reg, sp_off(env.get_offset(&ptr))));
+      if !env.frame_layout().is_ptr(&ptr) {
+        asm.push_str(&sw(&val_reg, "sp", env.get_offset(&ptr)));
+      } else {
+        // 此时我们需要一个寄存器来存储指针的值
+        let ptr_reg_guard = RegGuard::new().expect("No register available");
+        let mut ptr_reg = ptr_reg_guard.name().to_string();
+        asm.push_str(&load_operand_to_reg(env, ptr, &mut ptr_reg));
+        // 现在 ptr_reg 存储的是指针的值
+        asm.push_str(&sw(&val_reg, &ptr_reg, 0));
+      }
     }
     asm
   }
@@ -191,7 +231,7 @@ impl GenerateAsm for Return {
         }
         _ => {
           let off = env.get_offset(&v);
-          asm.push_str(&format!("  lw    a0, {}\n", sp_off(off)));
+          asm.push_str(&lw("a0", "sp", off));
         }
       }
     }
@@ -211,32 +251,56 @@ impl GenerateAsm for Binary {
     let lhs = self.lhs();
     let rhs = self.rhs();
 
-    let (lhs_asm, lhs_reg) = load_operand_to_reg(env, lhs, "t0".into());
-    let (rhs_asm, rhs_reg) = load_operand_to_reg(env, rhs, "t1".into());
+    let lhs_reg_guard = RegGuard::new().expect("No register available");
+    let rhs_reg_guard = RegGuard::new().expect("No register available");
+
+    let mut lhs_reg = lhs_reg_guard.name().to_string();
+    let mut rhs_reg = rhs_reg_guard.name().to_string();
+
     let dest_off = env.get_self_offset();
 
-    asm.push_str(&lhs_asm);
-    asm.push_str(&rhs_asm);
+    asm.push_str(&load_operand_to_reg(env, lhs, &mut lhs_reg));
+    asm.push_str(&load_operand_to_reg(env, rhs, &mut rhs_reg));
 
     use BinaryOp::*;
-    let op_str = match self.op() {
-      Add => "add", Sub => "sub", Mul => "mul", Div => "div",
-      Mod => "rem", And => "and", Or => "or", Xor => "xor",
-      Shl => "sll", Shr => "srl", Sar => "sra",
-      Eq => "seqz", NotEq => "snez", Lt => "slt", Le => "sle",
-      Gt => "sgt", Ge => "sge",
-    };
-
+    
     match self.op() {
+      // 相等性比较
       Eq | NotEq => {
+        let op_str = if matches!(self.op(), Eq) { "seqz" } else { "snez" };
         asm.push_str(&format!("  sub   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg));
         asm.push_str(&format!("  {}   {}, {}\n", op_str, lhs_reg, lhs_reg));
       }
-      _ => {
-        asm.push_str(&format!("  {}   {}, {}, {}\n", op_str, lhs_reg, lhs_reg, rhs_reg));
+      
+      // 小于等于：a <= b 等价于 !(b < a)
+      Le => {
+        asm.push_str(&format!("  slt   {}, {}, {}\n", lhs_reg, rhs_reg, lhs_reg)); // b < a
+        asm.push_str(&format!("  xori  {}, {}, 1\n", lhs_reg, lhs_reg));           // !(b < a)
       }
+      
+      // 大于等于：a >= b 等价于 !(a < b) 
+      Ge => {
+        asm.push_str(&format!("  slt   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)); // a < b
+        asm.push_str(&format!("  xori  {}, {}, 1\n", lhs_reg, lhs_reg));           // !(a < b)
+      }
+      
+      // 其他运算
+      Add => asm.push_str(&format!("  add   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Sub => asm.push_str(&format!("  sub   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Mul => asm.push_str(&format!("  mul   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Div => asm.push_str(&format!("  div   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Mod => asm.push_str(&format!("  rem   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      And => asm.push_str(&format!("  and   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Or  => asm.push_str(&format!("  or    {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Xor => asm.push_str(&format!("  xor   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Shl => asm.push_str(&format!("  sll   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Shr => asm.push_str(&format!("  srl   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Sar => asm.push_str(&format!("  sra   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Lt  => asm.push_str(&format!("  slt   {}, {}, {}\n", lhs_reg, lhs_reg, rhs_reg)),
+      Gt  => asm.push_str(&format!("  slt   {}, {}, {}\n", lhs_reg, rhs_reg, lhs_reg)), // b < a
     }
-    asm.push_str(&format!("  sw    {}, {}\n", lhs_reg, sp_off(dest_off)));
+
+    asm.push_str(&sw(&lhs_reg, "sp", dest_off));
 
     asm
   }
@@ -249,8 +313,11 @@ impl GenerateAsm for Branch {
     ) -> String {
     let mut asm = String::new();
     let cond = self.cond();
-    let (cond_asm, cond_reg) = load_operand_to_reg(env, cond, "t0".into());
-    asm.push_str(&cond_asm);
+
+    let cond_reg_guard = RegGuard::new().expect("No register available");
+    let mut cond_reg = cond_reg_guard.name().to_string();
+
+    asm.push_str(&load_operand_to_reg(env, cond, &mut cond_reg));
     let then_bb = env.get_bb_name(self.true_bb());
     let else_bb = env.get_bb_name(self.false_bb());
     asm.push_str(&format!("  bnez  {}, {}\n", cond_reg, then_bb));
@@ -283,13 +350,14 @@ impl GenerateAsm for Call {
     
     for (i, &arg) in args.iter().enumerate() {
       if i < 8 {
-        let (arg_asm, _arg_reg) = load_operand_to_reg(env, arg, format!("a{}", i));
-        asm.push_str(&arg_asm);
+        let mut reg = format!("a{}", i);
+        asm.push_str(&load_operand_to_reg(env, arg, &mut reg));
       } else {
-        let (arg_asm, arg_reg) = load_operand_to_reg(env, arg, "t0".into());
-        asm.push_str(&arg_asm);
+        let tmp_reg_guard = RegGuard::new().expect("No register available");
+        let mut tmp_reg = tmp_reg_guard.name().to_string();
+        asm.push_str(&load_operand_to_reg(env, arg, &mut tmp_reg));
         let off = ((i as i32) - 8) * 4;
-        asm.push_str(&format!("  sw    {}, {}\n", arg_reg, sp_off(off)));
+        asm.push_str(&sw(&tmp_reg, "sp", off));
       }
     }
 
@@ -298,11 +366,107 @@ impl GenerateAsm for Call {
 
     if let TypeKind::Function(_param_ty, ret_ty) = callee.ty().kind() {
       if !ret_ty.is_unit() {
-        asm.push_str(&format!("  sw    a0, {}\n", sp_off(env.get_self_offset())));
+        asm.push_str(&sw("a0", "sp", env.get_self_offset()));
       }
     } else {
       panic!("Call target is not a function type");
     }
+
+    asm
+  }
+}
+
+impl GenerateAsm for GetElemPtr {
+  fn generate_asm(
+    &self,
+    env: &mut Environment,
+    ) -> String {
+    let mut asm = String::new();
+
+    let dest_off = env.get_self_offset();
+    println!("GetElemPtr dest offset: {}", dest_off);
+
+    let src_reg_guard = RegGuard::new().expect("No register available");
+    let idx_reg_guard = RegGuard::new().expect("No register available");
+
+    let mut src_reg = src_reg_guard.name().to_string();
+    let mut idx_reg = idx_reg_guard.name().to_string();
+
+    if self.src().is_global() {
+      asm.push_str(&env.load_global_addr(self.src(), &src_reg));
+    } else {
+      if !env.frame_layout().is_ptr(&self.src()) {
+        let off = env.get_offset(&self.src());
+        asm.push_str(&addi(&src_reg, "sp", off));
+      } else {
+        asm.push_str(&load_operand_to_reg(env, self.src(), &mut src_reg));
+      }
+    }
+
+    asm.push_str(&load_operand_to_reg(env, self.index(), &mut idx_reg));
+
+    let src_ty = env.get_value_ty(self.src());
+    if let TypeKind::Pointer(base_ty) = src_ty.kind() {
+      if let TypeKind::Array(elem_ty, _size) = base_ty.kind() {
+        let elem_size = calculate_size(elem_ty.kind().clone(), false);
+        let tmp_reg = RegGuard::new().expect("No register available");
+        asm.push_str(&format!("  li   {}, {}\n", tmp_reg, elem_size));
+        asm.push_str(&format!("  mul   {}, {}, {}\n", idx_reg, idx_reg, tmp_reg));
+      } else {
+        panic!("Array subscript is not an array type");
+      }
+    } else {
+      panic!("GetElemPtr source is not a pointer type");
+    }
+
+    asm.push_str(&format!("  add   {}, {}, {}\n", &src_reg, src_reg, idx_reg));
+    asm.push_str(&sw(&src_reg, "sp", dest_off));
+
+    asm
+  }
+}
+
+impl GenerateAsm for GetPtr {
+  fn generate_asm(
+    &self,
+    env: &mut Environment,
+    ) -> String {
+    let mut asm = String::new();
+
+    let dest_off = env.get_self_offset();
+    println!("GetElemPtr dest offset: {}", dest_off);
+
+    let src_reg_guard = RegGuard::new().expect("No register available");
+    let idx_reg_guard = RegGuard::new().expect("No register available");
+
+    let mut src_reg = src_reg_guard.name().to_string();
+    let mut idx_reg = idx_reg_guard.name().to_string();
+
+    asm.push_str(&load_operand_to_reg(env, self.src(), &mut src_reg));
+    asm.push_str(&load_operand_to_reg(env, self.index(), &mut idx_reg));
+
+    let src_ty = env.get_value_ty(self.src());
+    println!("debug type: {}", src_ty);
+
+    if let TypeKind::Pointer(base_ty) = src_ty.kind() {
+      if let TypeKind::Array(elem_ty, _size) = base_ty.kind() {
+        let elem_size = calculate_size(elem_ty.kind().clone(), false);
+        let tmp_reg = RegGuard::new().expect("No register available");
+        asm.push_str(&format!("  li   {}, {}\n", tmp_reg, elem_size));
+        asm.push_str(&format!("  mul   {}, {}, {}\n", idx_reg, idx_reg, tmp_reg));
+      } else if let TypeKind::Int32 = base_ty.kind() {
+        let tmp_reg = RegGuard::new().expect("No register available");
+        asm.push_str(&format!("  li   {}, {}\n", tmp_reg, 4));
+        asm.push_str(&format!("  mul   {}, {}, {}\n", idx_reg, idx_reg, tmp_reg));
+      } else {
+        panic!("Array subscript is not an array type");
+      }
+    } else {
+      panic!("GetElemPtr source is not a pointer type");
+    }
+
+    asm.push_str(&format!("  add   {}, {}, {}\n", &src_reg, src_reg, idx_reg));
+    asm.push_str(&sw(&src_reg, "sp", dest_off));
 
     asm
   }
