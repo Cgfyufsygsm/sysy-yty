@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::HashMap, ops::Deref};
+use std::{collections::HashMap, fmt::format, ops::Deref};
 
 use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Call, GetElemPtr, GetPtr, Integer, Jump, Load, Return, Store}, FunctionData, Program, TypeKind, Value, ValueKind};
 use crate::backend::{env::Environment, frame::layout_frame, reg::RegGuard, util::{calculate_size, load_operand_to_reg, lw, addi, sw}};
@@ -320,8 +320,10 @@ impl GenerateAsm for Branch {
     asm.push_str(&load_operand_to_reg(env, cond, &mut cond_reg));
     let then_bb = env.get_bb_name(self.true_bb());
     let else_bb = env.get_bb_name(self.false_bb());
-    asm.push_str(&format!("  bnez  {}, {}\n", cond_reg, then_bb));
+    asm.push_str(&format!("  bnez  {}, {}_tmp_label\n", cond_reg, then_bb));
     asm.push_str(&format!("  j     {}\n", else_bb));
+    asm.push_str(&format!("{}_tmp_label:\n", then_bb));
+    asm.push_str(&format!("  j     {}\n", then_bb));
     asm
   }
 }
@@ -384,7 +386,6 @@ impl GenerateAsm for GetElemPtr {
     let mut asm = String::new();
 
     let dest_off = env.get_self_offset();
-    println!("GetElemPtr dest offset: {}", dest_off);
 
     let src_reg_guard = RegGuard::new().expect("No register available");
     let idx_reg_guard = RegGuard::new().expect("No register available");
@@ -406,6 +407,8 @@ impl GenerateAsm for GetElemPtr {
     asm.push_str(&load_operand_to_reg(env, self.index(), &mut idx_reg));
 
     let src_ty = env.get_value_ty(self.src());
+    println!("elemptr type: {}", src_ty);
+
     if let TypeKind::Pointer(base_ty) = src_ty.kind() {
       if let TypeKind::Array(elem_ty, _size) = base_ty.kind() {
         let elem_size = calculate_size(elem_ty.kind().clone(), false);
@@ -449,8 +452,8 @@ impl GenerateAsm for GetPtr {
     println!("debug type: {}", src_ty);
 
     if let TypeKind::Pointer(base_ty) = src_ty.kind() {
-      if let TypeKind::Array(elem_ty, _size) = base_ty.kind() {
-        let elem_size = calculate_size(elem_ty.kind().clone(), false);
+      if let TypeKind::Array(_, _size) = base_ty.kind() {
+        let elem_size = calculate_size(base_ty.kind().clone(), false);
         let tmp_reg = RegGuard::new().expect("No register available");
         asm.push_str(&format!("  li   {}, {}\n", tmp_reg, elem_size));
         asm.push_str(&format!("  mul   {}, {}, {}\n", idx_reg, idx_reg, tmp_reg));
