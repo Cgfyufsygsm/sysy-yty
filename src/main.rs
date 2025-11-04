@@ -17,6 +17,8 @@ enum Mode {
     Koopa,
     #[value(name = "-riscv")]
     Riscv,
+    #[value(name = "-perf")]
+    Perf,
 }
 
 #[derive(Parser, Debug)]
@@ -58,6 +60,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       String::from_utf8(buf.into_inner()).unwrap()
     }
     Mode::Riscv => {
+      backend::Backend::generate_asm(&ir)
+    }
+    Mode::Perf => {
       backend::Backend::generate_asm(&ir)
     }
   };

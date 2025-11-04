@@ -1,5 +1,5 @@
 use core::panic;
-use std::{collections::HashMap, fmt::format, ops::Deref};
+use std::{collections::HashMap, ops::Deref};
 
 use koopa::ir::{entities::ValueData, values::{Binary, BinaryOp, Branch, Call, GetElemPtr, GetPtr, Integer, Jump, Load, Return, Store}, FunctionData, Program, TypeKind, Value, ValueKind};
 use crate::backend::{env::Environment, frame::layout_frame, reg::RegGuard, util::{calculate_size, load_operand_to_reg, lw, addi, sw}};
