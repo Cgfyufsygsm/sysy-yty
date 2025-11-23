@@ -21,16 +21,7 @@ impl FrameLayout {
   }
 
   pub fn get_offset(&self, val: &Value) -> i32 {
-    let vo = self.offsets.get(val).expect("value not in frame layout");
-    // 参数的偏移已经包含了完整的位置，不需要再加 outgoing_args_size
-    // 局部变量的偏移需要加上 outgoing_args_size
-    if vo.offset >= self.size {
-      // 这是一个传入的参数（offset >= size 说明在栈帧之外）
-      vo.offset
-    } else {
-      // 这是局部变量
-      vo.offset + self.outgoing_args_size
-    }
+    self.offsets.get(val).expect("value not in frame layout").offset + self.outgoing_args_size
   }
 
   // getelemptr 和 getptr 的结果是指针类型

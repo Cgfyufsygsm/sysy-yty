@@ -358,9 +358,7 @@ impl GenerateAsm for Call {
         let tmp_reg_guard = RegGuard::new().expect("No register available");
         let mut tmp_reg = tmp_reg_guard.name().to_string();
         asm.push_str(&load_operand_to_reg(env, arg, &mut tmp_reg));
-        // 额外参数存储在当前栈帧之上，被调用者会从那里读取
-        // 偏移 = 当前栈帧大小 + (参数索引 - 8) * 4
-        let off = env.frame_layout().size() + ((i as i32) - 8) * 4;
+        let off = ((i as i32) - 8) * 4;
         asm.push_str(&sw(&tmp_reg, "sp", off));
       }
     }
