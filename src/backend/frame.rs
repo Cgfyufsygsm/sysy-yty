@@ -115,7 +115,13 @@ pub fn layout_frame(func: &FunctionData) -> FrameLayout {
       param_regs.insert(param, format!("a{}", i));
     } else {
       // TODO 处理数组参数
-      offsets.insert(param, ValueOffset { offset: aligned + (i as i32 - 8) * 4, is_ptr: false });
+      offsets.insert(
+      param,
+      ValueOffset {
+        offset: aligned - a + (i as i32 - 8) * 4,
+        is_ptr: false,
+      },
+    );
       // offsets.insert(param, aligned + (i as i32 - 8) * 4);
     }
   }
