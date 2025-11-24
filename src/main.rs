@@ -59,7 +59,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             KoopaGenerator::new(Box::new(&mut buf)).generate_on(&ir)?;
             String::from_utf8(buf.into_inner()).unwrap()
         }
-        Mode::Riscv => backend::Backend::new().generate_asm(&ir),
+        Mode::Riscv => backend::Backend::with_options(backend::BackendOptions {
+            enable_peephole: true,
+            enable_graph_coloring: true,
+        })
+        .generate_asm(&ir),
         Mode::Perf => backend::Backend::with_options(backend::BackendOptions {
             enable_peephole: true,
             enable_graph_coloring: true,
