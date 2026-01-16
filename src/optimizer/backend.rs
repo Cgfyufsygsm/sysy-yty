@@ -11,7 +11,7 @@ struct MemInst {
 }
 
 fn peephole_sw_lw(asm: &mut String) {
-  let mut lines: Vec<&str> = asm.lines().collect();
+  let lines: Vec<&str> = asm.lines().collect();
   let had_trailing_newline = asm.ends_with('\n');
   let mut out: Vec<String> = Vec::with_capacity(lines.len());
 

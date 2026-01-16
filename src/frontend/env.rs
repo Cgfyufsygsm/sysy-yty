@@ -59,11 +59,11 @@ impl Context {
     self.func.is_none()
   }
 
-  fn local_builder(&mut self) -> LocalBuilder {
+  fn local_builder(&mut self) -> LocalBuilder<'_> {
     self.func_data().dfg_mut().new_value()
   }
 
-  fn global_builder(&mut self) -> GlobalBuilder {
+  fn global_builder(&mut self) -> GlobalBuilder<'_> {
     self.program.new_value()
   }
 
