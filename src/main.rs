@@ -51,7 +51,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
   let mut ir = frontend::Frontend::generate_ir(&ast);
   if matches!(args.mode, Mode::Perf) {
-    optimizer::optimize(&mut ir);
+    optimizer::optimize_ir(&mut ir);
   }
 
   let output = match args.mode {
@@ -67,7 +67,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
       backend::Backend::generate_asm(&ir)
     }
     Mode::Perf => {
-      backend::Backend::generate_asm(&ir)
+      let mut asm = backend::Backend::generate_asm(&ir);
+      optimizer::optimize_backend(&mut asm);
+      asm
     }
   };
 
