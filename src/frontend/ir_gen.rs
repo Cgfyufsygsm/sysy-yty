@@ -367,7 +367,16 @@ impl GenerateIR for If {
   type Output = ();
   
   fn generate_on(&self, env: &mut Environment) {
-    let cond = self.cond.fold(env).generate_on(env);
+    let cond_folded = self.cond.fold(env);
+    if let Exp::Number(value) = cond_folded {
+      if value != 0 {
+        self.then_block.generate_on(env);
+      } else if let Some(else_stmt) = &self.else_block {
+        else_stmt.generate_on(env);
+      }
+      return;
+    }
+    let cond = cond_folded.generate_on(env);
     let orig_bb = env.ctx.block.expect("No current basic block when generating if");
 
 
@@ -455,6 +464,42 @@ impl GenerateIR for While {
   fn generate_on(&self, env: &mut Environment) {
     let orig_bb = env.ctx.block.expect("No current basic block when generating while");
 
+    let cond_folded = self.cond.fold(env);
+    if let Exp::Number(value) = cond_folded {
+      if value == 0 {
+        return;
+      }
+
+      env.ctx.create_block(Some(fresh_bb_name("while_body")));
+      let while_body_bb = env.ctx.block.expect("Failed to create 'while_body' block");
+      env.ctx.create_block(Some(fresh_bb_name("while_end")));
+      let while_end_bb = env.ctx.block.expect("Failed to create 'while_end' block");
+
+      env.ctx.set_block(orig_bb);
+      let jump_body_inst = env.ctx.jump(while_body_bb);
+      env.ctx.add_inst(jump_body_inst);
+      env.ctx.mark_block_terminated(orig_bb);
+
+      // push loop into stack
+      env.ctx.push_loop(while_body_bb, while_end_bb);
+
+      env.ctx.set_block(while_body_bb);
+      self.body.generate_on(env);
+      let body_open = env.ctx.current_open_block();
+
+      env.ctx.pop_loop();
+
+      if let Some(bb) = body_open {
+        env.ctx.set_block(bb);
+        let body_jmp_inst = env.ctx.jump(while_body_bb);
+        env.ctx.add_inst(body_jmp_inst);
+        env.ctx.mark_block_terminated(bb);
+      }
+
+      env.ctx.set_block(while_end_bb);
+      return;
+    }
+
     env.ctx.create_block(Some(fresh_bb_name("while_entry")));
     let while_entry_bb = env.ctx.block.expect("Failed to create 'while_entry' block");
     env.ctx.create_block(Some(fresh_bb_name("while_body")));
@@ -468,7 +513,7 @@ impl GenerateIR for While {
     env.ctx.mark_block_terminated(orig_bb);
 
     env.ctx.set_block(while_entry_bb);
-    let cond = self.cond.fold(env).generate_on(env);
+    let cond = cond_folded.generate_on(env);
     let cur_bb = env.ctx.block.expect("No current basic block after condition evaluation");
     env.ctx.set_block(cur_bb);
     let branch_inst = env.ctx.branch(cond, while_body_bb, while_end_bb);

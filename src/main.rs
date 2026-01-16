@@ -1,5 +1,6 @@
 pub mod frontend;
 pub mod backend;
+pub mod optimizer;
 
 use koopa::back::KoopaGenerator;
 use lalrpop_util::lalrpop_mod;
@@ -48,7 +49,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
   // parse the source code into an AST
   let ast = sysy::CompUnitParser::new().parse(&input).unwrap();
-  let ir = frontend::Frontend::generate_ir(&ast);
+  let mut ir = frontend::Frontend::generate_ir(&ast);
+  if matches!(args.mode, Mode::Perf) {
+    optimizer::optimize(&mut ir);
+  }
 
   let output = match args.mode {
     Mode::Ast => {
