@@ -1,10 +1,14 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use koopa::ir::{
   builder_traits::ValueBuilder, BasicBlock, BinaryOp, Function, FunctionData, Program, Type,
   Value, ValueKind,
 };
 use koopa::ir::entities::ValueData;
+
+const MAX_ALLOC_FOR_CONST_PROP: usize = 4096;
+const MAX_BB_FOR_CONST_PROP: usize = 4096;
+const MAX_ALLOC_BB_PRODUCT: u64 = 2_000_000;
 
 pub fn run_const_prop(program: &mut Program) -> bool {
   let mut any_changed = false;
@@ -90,33 +94,39 @@ fn fold_alloc_loads(data: &mut FunctionData) -> bool {
   if allocs.is_empty() {
     return false;
   }
-
-  let alloc_list: Vec<Value> = allocs.iter().copied().collect();
-  let mut alloc_index: HashMap<Value, usize> = HashMap::new();
-  for (i, v) in alloc_list.iter().enumerate() {
-    alloc_index.insert(*v, i);
-  }
-
   let bbs: Vec<BasicBlock> = data.layout().bbs().keys().copied().collect();
-  let preds = build_preds(data, &bbs);
-  let default_state = vec![ConstState::Unknown; alloc_list.len()];
-  let mut in_map: HashMap<BasicBlock, Vec<ConstState>> =
-    bbs.iter().map(|bb| (*bb, default_state.clone())).collect();
-  let mut out_map = in_map.clone();
+  let alloc_len = allocs.len();
+  let bb_len = bbs.len();
+  let product = (alloc_len as u64) * (bb_len as u64);
+  if alloc_len > MAX_ALLOC_FOR_CONST_PROP
+    || bb_len > MAX_BB_FOR_CONST_PROP
+    || product > MAX_ALLOC_BB_PRODUCT
+  {
+    return false;
+  }
+  let (preds, succs) = build_cfg_edges(data, &bbs);
+  let mut in_map: HashMap<BasicBlock, ConstMap> =
+    bbs.iter().map(|bb| (*bb, ConstMap::new())).collect();
+  let mut out_map: HashMap<BasicBlock, ConstMap> =
+    bbs.iter().map(|bb| (*bb, ConstMap::new())).collect();
 
-  let mut changed = true;
-  while changed {
-    changed = false;
-    for bb in &bbs {
-      let in_state = meet_preds(bb, &preds, &out_map, &default_state);
-      if in_state != *in_map.get(bb).unwrap_or(&default_state) {
-        in_map.insert(*bb, in_state.clone());
-        changed = true;
-      }
-      let out_state = transfer_block(*bb, &in_state, data, &alloc_index);
-      if out_state != *out_map.get(bb).unwrap_or(&default_state) {
-        out_map.insert(*bb, out_state);
-        changed = true;
+  let mut worklist: VecDeque<BasicBlock> = bbs.iter().copied().collect();
+  let mut in_queue: HashSet<BasicBlock> = bbs.iter().copied().collect();
+
+  while let Some(bb) = worklist.pop_front() {
+    in_queue.remove(&bb);
+    let in_state = meet_preds_sparse(&bb, &preds, &out_map);
+    in_map.insert(bb, in_state.clone());
+    let out_state = transfer_block_sparse(bb, &in_state, data, &allocs);
+    let changed = out_map.get(&bb).map_or(true, |old| old != &out_state);
+    if changed {
+      out_map.insert(bb, out_state);
+      if let Some(succs) = succs.get(&bb) {
+        for succ in succs {
+          if in_queue.insert(*succ) {
+            worklist.push_back(*succ);
+          }
+        }
       }
     }
   }
@@ -127,7 +137,7 @@ fn fold_alloc_loads(data: &mut FunctionData) -> bool {
       Some(node) => node.insts().keys().copied().collect(),
       None => continue,
     };
-    let mut state = in_map.get(bb).cloned().unwrap_or_else(|| default_state.clone());
+    let mut state = in_map.get(bb).cloned().unwrap_or_default();
     let mut replacements: Vec<(Value, i32)> = Vec::new();
     let mut to_remove: Vec<Value> = Vec::new();
 
@@ -135,17 +145,23 @@ fn fold_alloc_loads(data: &mut FunctionData) -> bool {
       match data.dfg().value(inst).kind() {
         ValueKind::Store(store) => {
           let dest = store.dest();
-          let Some(idx) = alloc_index.get(&dest) else { continue };
-          let val = eval_value_const(data, store.value(), &state, &alloc_index);
-          state[*idx] = match val {
-            Some(c) => ConstState::Const(c),
-            None => ConstState::Unknown,
-          };
+          if !allocs.contains(&dest) {
+            continue;
+          }
+          let val = eval_value_const_sparse(data, store.value(), &state, &allocs);
+          match val {
+            Some(c) => {
+              state.insert(dest, c);
+            }
+            None => {
+              state.remove(&dest);
+            }
+          }
         }
         ValueKind::Load(load) => {
           let src = load.src();
-          let Some(idx) = alloc_index.get(&src) else { continue };
-          if let ConstState::Const(c) = state[*idx] {
+          let Some(c) = state.get(&src).copied() else { continue };
+          if allocs.contains(&src) {
             replacements.push((inst, c));
             to_remove.push(inst);
           }
@@ -170,17 +186,18 @@ fn fold_alloc_loads(data: &mut FunctionData) -> bool {
   replaced_any
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ConstState {
-  Const(i32),
-  Unknown,
-}
+type ConstMap = HashMap<Value, i32>;
 
-fn build_preds(
+fn build_cfg_edges(
   data: &FunctionData,
   bbs: &[BasicBlock],
-) -> HashMap<BasicBlock, Vec<BasicBlock>> {
+) -> (
+  HashMap<BasicBlock, Vec<BasicBlock>>,
+  HashMap<BasicBlock, HashSet<BasicBlock>>,
+) {
   let mut preds: HashMap<BasicBlock, HashSet<BasicBlock>> =
+    bbs.iter().map(|bb| (*bb, HashSet::new())).collect();
+  let mut succs: HashMap<BasicBlock, HashSet<BasicBlock>> =
     bbs.iter().map(|bb| (*bb, HashSet::new())).collect();
   for bb in bbs {
     let node = match data.layout().bbs().node(bb) {
@@ -190,88 +207,77 @@ fn build_preds(
     for &inst in node.insts().keys() {
       for succ in data.dfg().value(inst).kind().bb_uses() {
         preds.entry(succ).or_default().insert(*bb);
+        succs.entry(*bb).or_default().insert(succ);
       }
     }
   }
-  preds
+  let preds = preds
     .into_iter()
     .map(|(bb, set)| (bb, set.into_iter().collect()))
-    .collect()
+    .collect();
+  (preds, succs)
 }
 
-fn meet_preds(
+fn meet_preds_sparse(
   bb: &BasicBlock,
   preds: &HashMap<BasicBlock, Vec<BasicBlock>>,
-  out_map: &HashMap<BasicBlock, Vec<ConstState>>,
-  default_state: &[ConstState],
-) -> Vec<ConstState> {
+  out_map: &HashMap<BasicBlock, ConstMap>,
+) -> ConstMap {
   let Some(preds) = preds.get(bb) else {
-    return default_state.to_vec();
+    return ConstMap::new();
   };
-  if preds.is_empty() {
-    return default_state.to_vec();
-  }
-
-  let mut result = vec![ConstState::Unknown; default_state.len()];
-  for idx in 0..default_state.len() {
-    let mut val: Option<i32> = None;
-    for pred in preds {
-      let state = match out_map.get(pred) {
-        Some(state) => state.as_slice(),
-        None => default_state,
-      };
-      match state[idx] {
-        ConstState::Const(c) => {
-          if val.map_or(true, |v| v == c) {
-            val = Some(c);
-          } else {
-            val = None;
-            break;
-          }
-        }
-        ConstState::Unknown => {
-          val = None;
-          break;
-        }
-      }
-    }
-    if let Some(c) = val {
-      result[idx] = ConstState::Const(c);
+  let mut iter = preds.iter();
+  let Some(first) = iter.next() else {
+    return ConstMap::new();
+  };
+  let mut result = out_map.get(first).cloned().unwrap_or_default();
+  let empty = ConstMap::new();
+  for pred in iter {
+    let state = out_map.get(pred).unwrap_or(&empty);
+    result.retain(|k, v| state.get(k).map_or(false, |sv| sv == v));
+    if result.is_empty() {
+      break;
     }
   }
   result
 }
 
-fn transfer_block(
+fn transfer_block_sparse(
   bb: BasicBlock,
-  in_state: &[ConstState],
+  in_state: &ConstMap,
   data: &FunctionData,
-  alloc_index: &HashMap<Value, usize>,
-) -> Vec<ConstState> {
+  allocs: &HashSet<Value>,
+) -> ConstMap {
   let node = match data.layout().bbs().node(&bb) {
     Some(node) => node,
-    None => return in_state.to_vec(),
+    None => return in_state.clone(),
   };
-  let mut state = in_state.to_vec();
+  let mut state = in_state.clone();
   for &inst in node.insts().keys() {
     if let ValueKind::Store(store) = data.dfg().value(inst).kind() {
       let dest = store.dest();
-      let Some(idx) = alloc_index.get(&dest) else { continue };
-      let val = eval_value_const(data, store.value(), &state, alloc_index);
-      state[*idx] = match val {
-        Some(c) => ConstState::Const(c),
-        None => ConstState::Unknown,
-      };
+      if !allocs.contains(&dest) {
+        continue;
+      }
+      let val = eval_value_const_sparse(data, store.value(), &state, allocs);
+      match val {
+        Some(c) => {
+          state.insert(dest, c);
+        }
+        None => {
+          state.remove(&dest);
+        }
+      }
     }
   }
   state
 }
 
-fn eval_value_const(
+fn eval_value_const_sparse(
   data: &FunctionData,
   value: Value,
-  state: &[ConstState],
-  alloc_index: &HashMap<Value, usize>,
+  state: &ConstMap,
+  allocs: &HashSet<Value>,
 ) -> Option<i32> {
   if value.is_global() {
     return None;
@@ -280,10 +286,10 @@ fn eval_value_const(
     ValueKind::Integer(intv) => Some(intv.value()),
     ValueKind::Load(load) => {
       let src = load.src();
-      alloc_index.get(&src).and_then(|idx| match state[*idx] {
-        ConstState::Const(c) => Some(c),
-        ConstState::Unknown => None,
-      })
+      if !allocs.contains(&src) {
+        return None;
+      }
+      state.get(&src).copied()
     }
     _ => None,
   }
