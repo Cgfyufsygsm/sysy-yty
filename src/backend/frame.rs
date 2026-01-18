@@ -17,6 +17,7 @@ pub struct FrameLayout {
   ra_saved: bool,
   outgoing_args_size: i32,
   param_stack: Vec<Value>,
+  saved_regs: Vec<(String, i32)>,
 }
 
 impl FrameLayout {
@@ -52,12 +53,19 @@ impl FrameLayout {
     if self.ra_saved {
       asm.push_str(&sw("ra", "sp", self.size - 4));
     }
+    for (reg, offset) in &self.saved_regs {
+      asm.push_str(&sw(reg, "sp", *offset));
+    }
     asm
   }
 
   pub fn generate_epilogue(&self, func_name: &str) -> String {
     let mut asm = String::new();
     asm.push_str(&format!("{}_ret:\n", func_name));
+
+    for (reg, offset) in &self.saved_regs {
+      asm.push_str(&lw(reg, "sp", *offset));
+    }
 
     if self.ra_saved {
       asm.push_str(&lw("ra", "sp", self.size - 4));
@@ -70,6 +78,19 @@ impl FrameLayout {
 
   pub fn get_param_reg(&self, param: &Value) -> Option<&String> {
     self.param_regs.get(param)
+  }
+
+  pub fn add_saved_reg(&mut self, reg: String) -> i32 {
+    if let Some((_, offset)) = self.saved_regs.iter().find(|(name, _)| name == &reg) {
+      return *offset;
+    }
+    let offset = self.alloc_spill_slot();
+    self.saved_regs.push((reg, offset));
+    offset
+  }
+
+  pub fn clear_saved_regs(&mut self) {
+    self.saved_regs.clear();
   }
 
   pub fn alloc_spill_slot(&mut self) -> i32 {
@@ -168,5 +189,6 @@ pub fn layout_frame(func: &FunctionData) -> FrameLayout {
     ra_saved: ra_needed,
     outgoing_args_size: a,
     param_stack,
+    saved_regs: Vec::new(),
   }
 }

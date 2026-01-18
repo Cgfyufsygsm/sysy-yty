@@ -31,6 +31,7 @@ impl fmt::Display for Reg {
 pub enum Inst {
   Li { rd: Reg, imm: i32 },
   La { rd: Reg, symbol: String },
+  LwParam { rd: Reg, index: u32 },
   Lw { rd: Reg, base: Reg, offset: i32 },
   Sw { rs: Reg, base: Reg, offset: i32 },
   Add { rd: Reg, rs1: Reg, rs2: Reg },
@@ -141,6 +142,7 @@ impl Inst {
     match self {
       Inst::Li { rd, imm } => format!("  li    {}, {}\n", rd, imm),
       Inst::La { rd, symbol } => format!("  la    {}, {}\n", rd, symbol),
+      Inst::LwParam { .. } => panic!("LwParam must be resolved before emit"),
       Inst::Lw { rd, base, offset } => emit_lw(rd, base, *offset),
       Inst::Sw { rs, base, offset } => emit_sw(rs, base, *offset),
       Inst::Add { rd, rs1, rs2 } => format!("  add   {}, {}, {}\n", rd, rs1, rs2),

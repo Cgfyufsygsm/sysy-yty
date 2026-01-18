@@ -3,7 +3,10 @@ use std::collections::{HashMap, HashSet};
 use crate::backend::frame::FrameLayout;
 use crate::backend::mir::{Inst, MachineBlock, MachineFunction, MachineProgram, Reg, VRegInfo};
 
-const ALLOC_REGS: [&str; 6] = ["t0", "t1", "t2", "t3", "t4", "t5"];
+const ALLOC_REGS: [&str; 18] = [
+  "t0", "t1", "t2", "t3", "t4", "t5", "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8",
+  "s9", "s10", "s11",
+];
 
 pub fn allocate_program(program: &mut MachineProgram) {
   for func in &mut program.functions {
@@ -25,6 +28,8 @@ fn allocate_function(func: &mut MachineFunction) {
 
     if spilled.is_empty() {
       apply_coloring(func, &colors);
+      update_callee_saved(func);
+      resolve_stack_params(func);
       return;
     }
 
@@ -82,6 +87,9 @@ fn inst_uses_defs(inst: &Inst) -> (HashSet<u32>, HashSet<u32>) {
   match inst {
     Inst::Li { rd, .. } => def_reg(rd),
     Inst::La { rd, .. } => def_reg(rd),
+    Inst::LwParam { rd, .. } => {
+      def_reg(rd);
+    }
     Inst::Lw { rd, base, .. } => {
       def_reg(rd);
       use_reg(base);
@@ -316,6 +324,91 @@ fn apply_coloring(func: &mut MachineFunction, colors: &HashMap<u32, &'static str
   }
 }
 
+fn update_callee_saved(func: &mut MachineFunction) {
+  func.frame.clear_saved_regs();
+  let mut used = HashSet::new();
+  for block in &func.blocks {
+    for inst in &block.insts {
+      collect_saved_regs(inst, &mut used);
+    }
+  }
+  let mut regs: Vec<String> = used.into_iter().collect();
+  regs.sort();
+  for reg in regs {
+    func.frame.add_saved_reg(reg);
+  }
+}
+
+fn resolve_stack_params(func: &mut MachineFunction) {
+  let base = func.frame.size();
+  for block in &mut func.blocks {
+    for inst in &mut block.insts {
+      if let Inst::LwParam { rd, index } = inst {
+        *inst = Inst::Lw {
+          rd: rd.clone(),
+          base: Reg::phys("sp"),
+          offset: base + (*index as i32) * 4,
+        };
+      }
+    }
+  }
+}
+
+fn collect_saved_regs(inst: &Inst, out: &mut HashSet<String>) {
+  for reg in inst_regs(inst) {
+    if let Reg::Phys(name) = reg {
+      if is_callee_saved(name) {
+        out.insert(name.clone());
+      }
+    }
+  }
+}
+
+fn inst_regs(inst: &Inst) -> Vec<&Reg> {
+  match inst {
+    Inst::Li { rd, .. } => vec![rd],
+    Inst::La { rd, .. } => vec![rd],
+    Inst::LwParam { rd, .. } => vec![rd],
+    Inst::Lw { rd, base, .. } => vec![rd, base],
+    Inst::Sw { rs, base, .. } => vec![rs, base],
+    Inst::Add { rd, rs1, rs2 }
+    | Inst::Sub { rd, rs1, rs2 }
+    | Inst::Mul { rd, rs1, rs2 }
+    | Inst::Div { rd, rs1, rs2 }
+    | Inst::Rem { rd, rs1, rs2 }
+    | Inst::And { rd, rs1, rs2 }
+    | Inst::Or { rd, rs1, rs2 }
+    | Inst::Xor { rd, rs1, rs2 }
+    | Inst::Sll { rd, rs1, rs2 }
+    | Inst::Srl { rd, rs1, rs2 }
+    | Inst::Sra { rd, rs1, rs2 }
+    | Inst::Slt { rd, rs1, rs2 } => vec![rd, rs1, rs2],
+    Inst::Addi { rd, rs, .. } | Inst::Xori { rd, rs, .. } => vec![rd, rs],
+    Inst::Seqz { rd, rs } | Inst::Snez { rd, rs } => vec![rd, rs],
+    Inst::Bnez { rs, .. } => vec![rs],
+    Inst::J { .. } | Inst::Call { .. } | Inst::Label { .. } | Inst::Ret | Inst::Raw(_) => {
+      Vec::new()
+    }
+  }
+}
+
+fn is_callee_saved(name: &str) -> bool {
+  matches!(
+    name,
+    "s0" | "s1"
+      | "s2"
+      | "s3"
+      | "s4"
+      | "s5"
+      | "s6"
+      | "s7"
+      | "s8"
+      | "s9"
+      | "s10"
+      | "s11"
+  )
+}
+
 fn rewrite_spills(func: &mut MachineFunction, spilled: &HashSet<u32>) {
   for block in &mut func.blocks {
     let mut new_insts = Vec::new();
@@ -394,6 +487,10 @@ where
     Inst::La { rd, symbol } => Inst::La {
       rd: map_reg(rd),
       symbol: symbol.clone(),
+    },
+    Inst::LwParam { rd, index } => Inst::LwParam {
+      rd: map_reg(rd),
+      index: *index,
     },
     Inst::Lw { rd, base, offset } => Inst::Lw {
       rd: map_reg(rd),

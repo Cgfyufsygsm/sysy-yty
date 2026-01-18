@@ -189,17 +189,22 @@ fn load_operand_to_reg(env: &mut Environment, val: Value) -> (Reg, Vec<Inst>) {
     );
   }
 
-  if env.func_data().params().contains(&val) {
-    let off = env.get_offset(&val);
-    let tmp = env.alloc_temp_reg();
-    return (
-      tmp.clone(),
-      vec![Inst::Lw {
-        rd: tmp,
-        base: Reg::phys("sp"),
-        offset: off,
-      }],
-    );
+  if let Some(idx) = env
+    .func_data()
+    .params()
+    .iter()
+    .position(|&param| param == val)
+  {
+    if idx >= 8 {
+      let tmp = env.alloc_temp_reg();
+      return (
+        tmp.clone(),
+        vec![Inst::LwParam {
+          rd: tmp,
+          index: (idx - 8) as u32,
+        }],
+      );
+    }
   }
 
   enum KindTag {
