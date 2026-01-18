@@ -4,20 +4,30 @@ use koopa::ir::{
   builder::LocalInstBuilder, BasicBlock, Function, FunctionData, Program, Value, ValueKind,
 };
 
-pub fn simplify_cfg(program: &mut Program) {
+pub fn simplify_cfg(program: &mut Program) -> bool {
+  let mut changed = false;
   let funcs: Vec<Function> = program.func_layout().iter().copied().collect();
   for func in funcs {
     let func_data = program.func_mut(func);
-    simplify_func_cfg(func_data);
+    if simplify_func_cfg(func_data) {
+      changed = true;
+    }
   }
+  changed
 }
 
-fn simplify_func_cfg(data: &mut FunctionData) {
-  simplify_branches(data);
-  remove_unreachable_blocks(data);
+fn simplify_func_cfg(data: &mut FunctionData) -> bool {
+  let mut changed = false;
+  if simplify_branches(data) {
+    changed = true;
+  }
+  if remove_unreachable_blocks(data) {
+    changed = true;
+  }
+  changed
 }
 
-fn simplify_branches(data: &mut FunctionData) {
+fn simplify_branches(data: &mut FunctionData) -> bool {
   let mut replacements: Vec<(Value, BasicBlock, Vec<Value>)> = Vec::new();
   let bbs: Vec<BasicBlock> = data.layout().bbs().keys().copied().collect();
   for bb in bbs {
@@ -44,17 +54,20 @@ fn simplify_branches(data: &mut FunctionData) {
     }
   }
 
+  let changed = !replacements.is_empty();
   for (inst, target, args) in replacements {
     let builder = data.dfg_mut().replace_value_with(inst);
     builder.jump_with_args(target, args);
   }
+  changed
 }
 
-fn remove_unreachable_blocks(data: &mut FunctionData) {
+fn remove_unreachable_blocks(data: &mut FunctionData) -> bool {
   let Some(entry) = data.layout().entry_bb() else {
-    return;
+    return false;
   };
   let reachable = collect_reachable_bbs(data, entry);
+  let mut removed = false;
 
   let mut bb_cur = data.layout_mut().bbs_mut().cursor_front_mut();
   while let Some(bb) = bb_cur.key().copied() {
@@ -75,7 +88,9 @@ fn remove_unreachable_blocks(data: &mut FunctionData) {
     }
 
     bb_cur.remove_current();
+    removed = true;
   }
+  removed
 }
 
 fn collect_reachable_bbs(data: &FunctionData, entry: BasicBlock) -> HashSet<BasicBlock> {

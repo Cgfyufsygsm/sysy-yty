@@ -6,24 +6,33 @@ use koopa::ir::{
 };
 use koopa::ir::entities::ValueData;
 
-pub fn run_const_prop(program: &mut Program) {
+pub fn run_const_prop(program: &mut Program) -> bool {
+  let mut any_changed = false;
   let funcs: Vec<Function> = program.func_layout().iter().copied().collect();
   for func in funcs {
     let data = program.func_mut(func);
     let mut changed = true;
+    let mut func_changed = false;
     while changed {
       changed = false;
       if fold_alloc_loads(data) {
         changed = true;
+        func_changed = true;
       }
       if fold_binary(data) {
         changed = true;
+        func_changed = true;
       }
       if fold_bb_params(data) {
         changed = true;
+        func_changed = true;
       }
     }
+    if func_changed {
+      any_changed = true;
+    }
   }
+  any_changed
 }
 
 fn fold_binary(data: &mut FunctionData) -> bool {

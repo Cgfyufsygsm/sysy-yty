@@ -2,13 +2,17 @@ use std::collections::{HashMap, HashSet};
 
 use koopa::ir::{Function, FunctionData, Program, Value, ValueKind};
 
-pub fn run_dce(program: &mut Program) {
+pub fn run_dce(program: &mut Program) -> bool {
+  let mut changed = false;
   let funcs: Vec<Function> = program.func_layout().iter().copied().collect();
   for func in funcs {
     let func_data = program.func_mut(func);
     let mut dce = DeadCodeElimination::new();
-    dce.run_on_func(func, func_data);
+    if dce.run_on_func(func, func_data) {
+      changed = true;
+    }
   }
+  changed
 }
 
 struct DeadCodeElimination {
@@ -24,11 +28,11 @@ impl DeadCodeElimination {
     }
   }
 
-  fn run_on_func(&mut self, _func: Function, data: &mut FunctionData) {
+  fn run_on_func(&mut self, _func: Function, data: &mut FunctionData) -> bool {
     self.worklist.clear();
     self.liveset.clear();
     self.mark(data);
-    self.sweep(data);
+    self.sweep(data)
   }
 
   fn mark(&mut self, data: &FunctionData) {
@@ -52,7 +56,7 @@ impl DeadCodeElimination {
     }
   }
 
-  fn sweep(&self, data: &mut FunctionData) {
+  fn sweep(&self, data: &mut FunctionData) -> bool {
     let mut removed = Vec::new();
     let mut bb_cur = data.layout_mut().bbs_mut().cursor_front_mut();
     while let Some(bb) = bb_cur.node_mut() {
@@ -69,7 +73,7 @@ impl DeadCodeElimination {
     }
 
     if removed.is_empty() {
-      return;
+      return false;
     }
 
     let removed_set: HashSet<Value> = removed.iter().copied().collect();
@@ -107,6 +111,7 @@ impl DeadCodeElimination {
         }
       }
     }
+    !removed_dfg.is_empty()
   }
 
   fn is_critical_inst(kind: &ValueKind) -> bool {
