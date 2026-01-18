@@ -4,6 +4,7 @@ pub mod env;
 pub mod util;
 pub mod reg;
 pub mod mir;
+pub mod regalloc;
 
 use koopa::ir::Type;
 

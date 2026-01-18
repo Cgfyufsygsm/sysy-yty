@@ -11,10 +11,12 @@ struct ValueOffset {
 #[derive(Clone)]
 pub struct FrameLayout {
   size: i32,
+  locals_size: i32,
   offsets: HashMap<Value, ValueOffset>,
   param_regs: HashMap<Value, String>,
   ra_saved: bool,
   outgoing_args_size: i32,
+  param_stack: Vec<Value>,
 }
 
 impl FrameLayout {
@@ -23,7 +25,14 @@ impl FrameLayout {
   }
 
   pub fn get_offset(&self, val: &Value) -> i32 {
-    self.offsets.get(val).expect("value not in frame layout").offset + self.outgoing_args_size
+    self.try_get_offset(val).expect("value not in frame layout")
+  }
+
+  pub fn try_get_offset(&self, val: &Value) -> Option<i32> {
+    self
+      .offsets
+      .get(val)
+      .map(|entry| entry.offset + self.outgoing_args_size)
   }
 
   // getelemptr 和 getptr 的结果是指针类型
@@ -62,12 +71,34 @@ impl FrameLayout {
   pub fn get_param_reg(&self, param: &Value) -> Option<&String> {
     self.param_regs.get(param)
   }
+
+  pub fn alloc_spill_slot(&mut self) -> i32 {
+    let offset = self.locals_size;
+    self.locals_size += 4;
+
+    let old_size = self.size;
+    let r = if self.ra_saved { 4 } else { 0 };
+    let total = self.locals_size + self.outgoing_args_size + r;
+    self.size = (total + 15) & !15;
+
+    let delta = self.size - old_size;
+    if delta != 0 {
+      for val in &self.param_stack {
+        if let Some(entry) = self.offsets.get_mut(val) {
+          entry.offset += delta;
+        }
+      }
+    }
+
+    offset + self.outgoing_args_size
+  }
 }
 
 pub fn layout_frame(func: &FunctionData) -> FrameLayout {
   let mut offset = 0i32;
   let mut offsets = HashMap::new();
   let mut param_regs = HashMap::new();
+  let mut param_stack = Vec::new();
 
   let mut max_extra_args = 0i32;
   let mut ra_needed = false;
@@ -118,16 +149,24 @@ pub fn layout_frame(func: &FunctionData) -> FrameLayout {
     } else {
       // TODO 处理数组参数
       offsets.insert(
-      param,
-      ValueOffset {
-        offset: aligned - a + (i as i32 - 8) * 4,
-        is_ptr: false,
-      },
-    );
+        param,
+        ValueOffset {
+          offset: aligned - a + (i as i32 - 8) * 4,
+          is_ptr: false,
+        },
+      );
+      param_stack.push(param);
       // offsets.insert(param, aligned + (i as i32 - 8) * 4);
     }
   }
 
-
-  FrameLayout { size: aligned, offsets, param_regs, ra_saved: ra_needed, outgoing_args_size: a }
+  FrameLayout {
+    size: aligned,
+    locals_size: s,
+    offsets,
+    param_regs,
+    ra_saved: ra_needed,
+    outgoing_args_size: a,
+    param_stack,
+  }
 }

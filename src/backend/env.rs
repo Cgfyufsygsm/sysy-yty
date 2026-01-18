@@ -2,6 +2,7 @@ use std::{collections::HashMap};
 
 use koopa::ir::{BasicBlock, Function, FunctionData, Program, Type, Value};
 use crate::backend::frame::FrameLayout;
+use crate::backend::mir::{Reg, VRegInfo};
 
 pub struct Environment<'a> {
   program: &'a Program,
@@ -9,6 +10,8 @@ pub struct Environment<'a> {
   frame_layout: Option<FrameLayout>,
   inst: Option<Value>,
   global_table: &'a HashMap<Value, String>,
+  value_regs: HashMap<Value, Reg>,
+  vreg_info: VRegInfo,
 }
 
 impl<'a> Environment<'a> {
@@ -19,11 +22,15 @@ impl<'a> Environment<'a> {
       frame_layout: None,
       inst: None,
       global_table,
+      value_regs: HashMap::new(),
+      vreg_info: VRegInfo::default(),
     }
   }
 
   pub fn set_func(&mut self, func: Function) {
     self.func = Some(func);
+    self.value_regs.clear();
+    self.vreg_info = VRegInfo::default();
   }
 
   pub fn set_frame_layout(&mut self, layout: FrameLayout) {
@@ -44,6 +51,43 @@ impl<'a> Environment<'a> {
 
   pub fn clear_func(&mut self) {
     self.func = None;
+  }
+
+  pub fn alloc_value_reg(&mut self, value: Value) -> Reg {
+    if let Some(reg) = self.value_regs.get(&value) {
+      return reg.clone();
+    }
+    let reg = self.alloc_vreg();
+    if let Reg::Virt(id) = reg {
+      if let Some(off) = self.frame_layout().try_get_offset(&value) {
+        self.vreg_info.spill_offsets.insert(id, off);
+      }
+    }
+    self.value_regs.insert(value, reg.clone());
+    reg
+  }
+
+  pub fn alloc_temp_reg(&mut self) -> Reg {
+    self.alloc_vreg()
+  }
+
+  pub fn get_value_reg(&self, value: Value) -> Option<Reg> {
+    self.value_regs.get(&value).cloned()
+  }
+
+  pub fn get_self_reg(&mut self) -> Reg {
+    let inst = *self.inst();
+    self.alloc_value_reg(inst)
+  }
+
+  pub fn take_vreg_info(&mut self) -> VRegInfo {
+    std::mem::take(&mut self.vreg_info)
+  }
+
+  fn alloc_vreg(&mut self) -> Reg {
+    let id = self.vreg_info.next_vreg;
+    self.vreg_info.next_vreg += 1;
+    Reg::Virt(id)
   }
 
   pub fn func_data(&self) -> &FunctionData {

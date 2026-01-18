@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use crate::backend::frame::FrameLayout;
 
@@ -66,6 +66,13 @@ pub struct MachineFunction {
   pub name: String,
   pub blocks: Vec<MachineBlock>,
   pub frame: FrameLayout,
+  pub vreg_info: VRegInfo,
+}
+
+#[derive(Clone, Default)]
+pub struct VRegInfo {
+  pub spill_offsets: HashMap<u32, i32>,
+  pub next_vreg: u32,
 }
 
 pub enum GlobalInit {
@@ -166,13 +173,7 @@ fn imm_fits_12(imm: i32) -> bool {
   imm >= -2048 && imm <= 2047
 }
 
-fn pick_scratch(exclude: &[&Reg]) -> &'static str {
-  let candidates = ["t0", "t1", "t2", "t3", "t4", "t5", "t6"];
-  for reg in candidates {
-    if exclude.iter().all(|r| r.name() != reg) {
-      return reg;
-    }
-  }
+fn pick_scratch(_exclude: &[&Reg]) -> &'static str {
   "t6"
 }
 
