@@ -3,6 +3,7 @@ pub mod frame;
 pub mod env;
 pub mod util;
 pub mod reg;
+pub mod mir;
 
 use koopa::ir::Type;
 

@@ -2,11 +2,13 @@ use std::collections::HashMap;
 use koopa::ir::{FunctionData, Value, ValueKind};
 use crate::backend::util::{addi, calculate_size, lw, sw};
 
+#[derive(Clone)]
 struct ValueOffset {
   offset: i32,
   is_ptr: bool,
 }
 
+#[derive(Clone)]
 pub struct FrameLayout {
   size: i32,
   offsets: HashMap<Value, ValueOffset>,
