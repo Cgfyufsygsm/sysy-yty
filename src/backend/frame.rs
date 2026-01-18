@@ -168,7 +168,6 @@ pub fn layout_frame(func: &FunctionData) -> FrameLayout {
     if i < 8 {
       param_regs.insert(param, format!("a{}", i));
     } else {
-      // TODO 处理数组参数
       offsets.insert(
         param,
         ValueOffset {

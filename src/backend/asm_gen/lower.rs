@@ -1,147 +1,18 @@
-use std::{collections::HashMap, ops::Deref};
-
 use koopa::ir::{
   entities::ValueData,
   values::{
     Binary, BinaryOp, Branch, Call, GetElemPtr, GetPtr, Integer, Jump, Load, Return, Store,
   },
-  FunctionData, Program, TypeKind, Value, ValueKind,
+  TypeKind, Value, ValueKind,
 };
 
 use crate::backend::{
   env::Environment,
-  frame::layout_frame,
-  mir::{Global, GlobalInit, Inst, MachineBlock, MachineFunction, MachineProgram, Reg},
-  regalloc,
+  mir::{Inst, Reg},
   util::calculate_size,
 };
 
-pub trait GenerateProgAsm {
-  fn generate_asm(&self) -> String;
-}
-
-static SYSY_LIB_FUNCTIONS: [&str; 8] = [
-  "getint", "getch", "getarray", "putint", "putch", "putarray", "starttime", "stoptime",
-];
-
-fn collect_global_init(program: &Program, value: &Value, out: &mut Vec<GlobalInit>) {
-  match program.borrow_value(*value).deref().kind() {
-    ValueKind::Integer(int_val) => {
-      out.push(GlobalInit::Word(int_val.value()));
-    }
-    ValueKind::ZeroInit(_) => {
-      let ty = program.borrow_value(*value).deref().ty().kind().clone();
-      let size = calculate_size(ty, false);
-      out.push(GlobalInit::Zero(size));
-    }
-    ValueKind::Aggregate(aggregate) => {
-      for elem in aggregate.elems() {
-        collect_global_init(program, elem, out);
-      }
-    }
-    _ => panic!("Expected Integer, ZeroInit or Aggregate for global variable"),
-  }
-}
-
-impl GenerateProgAsm for Program {
-  fn generate_asm(&self) -> String {
-    let mut machine = lower_program(self);
-    regalloc::allocate_program(&mut machine);
-    machine.emit()
-  }
-}
-
-fn lower_program(program: &Program) -> MachineProgram {
-  let mut globals = Vec::new();
-  let mut global_table = HashMap::new();
-
-  for &value in program.inst_layout() {
-    let var_data = program.borrow_value(value);
-    let var_name = var_data
-      .name()
-      .as_ref()
-      .unwrap()
-      .trim_start_matches('@');
-
-    global_table.insert(value, var_name.to_string());
-
-    let mut init = Vec::new();
-    if let ValueKind::GlobalAlloc(global_alloc) = var_data.kind() {
-      collect_global_init(program, &global_alloc.init(), &mut init);
-    } else {
-      unreachable!("Expected GlobalAlloc for global variable, found {:?}", var_data.kind());
-    }
-
-    globals.push(Global {
-      name: var_name.to_string(),
-      init,
-    });
-  }
-
-  let mut functions = Vec::new();
-  for &func in program.func_layout() {
-    let func_data = program.func(func);
-    if func_data.name().starts_with('@') {
-      let func_name = func_data.name().trim_start_matches('@');
-      if SYSY_LIB_FUNCTIONS.contains(&func_name) {
-        continue;
-      }
-    } else {
-      unreachable!(
-        "Function name should start with '@', found: {}",
-        func_data.name()
-      );
-    }
-
-    let mut env = Environment::new(program, &global_table);
-    env.set_func(func);
-    functions.push(lower_function(func_data, &mut env));
-    env.clear_func();
-  }
-
-  MachineProgram { globals, functions }
-}
-
-fn lower_function(func: &FunctionData, env: &mut Environment) -> MachineFunction {
-  let frame_layout = layout_frame(func);
-  env.set_frame_layout(frame_layout.clone());
-
-  let func_name = func.name().trim_start_matches('@').to_string();
-  let mut blocks = Vec::new();
-
-  for (bb, node) in func.layout().bbs() {
-    let bb_name = func.dfg().bb(*bb).name();
-    let label = match bb_name {
-      Some(name) => name.trim_start_matches(&['@', '%'][..]).to_string(),
-      None => unreachable!("Basic block without name"),
-    };
-    let mut block = MachineBlock {
-      label,
-      insts: Vec::new(),
-    };
-
-    for &inst in node.insts().keys() {
-      let value_data = func.dfg().value(inst);
-      env.set_inst(inst);
-      block.insts.extend(lower_value_data(value_data, env));
-      env.clear_inst();
-    }
-
-    blocks.push(block);
-  }
-
-  let vreg_info = env.take_vreg_info();
-  env.clear_frame_layout();
-
-  MachineFunction {
-    name: func_name,
-    blocks,
-    frame: frame_layout,
-    vreg_info,
-  }
-}
-
-fn lower_value_data(value: &ValueData, env: &mut Environment) -> Vec<Inst> {
+pub(super) fn lower_value_data(value: &ValueData, env: &mut Environment) -> Vec<Inst> {
   match value.kind() {
     ValueKind::Integer(i) => lower_integer(i, env),
     ValueKind::Load(load) => lower_load(load, env),
